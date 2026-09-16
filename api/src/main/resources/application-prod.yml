@@ -1,0 +1,52 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST}:${DB_PORT:3306}/${DB_NAME}?useUnicode=true&sslMode=${DB_SSL_MODE:PREFERRED}&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    show-sql: false
+    hibernate:
+      # 스키마 변경은 docs/sql을 통해 별도로 적용합니다.
+      ddl-auto: validate
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: 5s
+      timeout: 5s
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+app:
+  cors:
+    # 호스트만 입력합니다. 예: app.example.com (https:// 및 경로 제외)
+    allowed-origins: https://${FRONTEND_DOMAIN}
+  meta:
+    app-id: ${META_APP_ID}
+    app-secret: ${META_APP_SECRET}
+    redirect-uri: ${META_REDIRECT_URI}
+  ai-creative:
+    api-key: ${OPENAI_API_KEY}
+  aws:
+    s3:
+      bucket: ${S3_BUCKET_NAME}
+      key-prefix: ${S3_KEY_PREFIX:multi-modal-ad}
+
+aes:
+  key:
+    personal-data-key: ${AES_PERSONAL_DATA_KEY}
+    search-hmac-key: ${AES_SEARCH_HMAC_KEY}
+token:
+  secret:
+    key: ${TOKEN_SECRET_KEY}
+cloud:
+  aws:
+    region:
+      static: ${AWS_REGION:ap-northeast-2}
+    credentials:
+      access-key: ${AWS_IAM_ACCESS_KEY}
+      secret-key: ${AWS_IAM_SECRET_KEY}

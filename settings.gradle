@@ -1,0 +1,14 @@
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+rootProject.name = 'ad-service'
+
+include 'api'
+include 'db'
+include 'admin-api'
+
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+    }
+}

@@ -1,0 +1,56 @@
+# Gradle / Maven
+target/
+build/
+
+bin/
+
+# 빌드된 JAR 파일
+*.war
+*.ear
+
+# .env 파일 (개발 환경 설정)
+.env
+.env.prod
+.env.prod.next
+__pycache__/
+
+# IDE 관련 설정 (IntelliJ, Eclipse 등)
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+
+# 로그 파일
+logs/
+*.log
+
+# OS 생성 파일
+.DS_Store
+Thumbs.db
+
+# 테스트 결과
+test-logs/
+*.out
+
+# Java class 파일
+*.class
+.gradle/
+
+# Java에 의해 생성되는 임시 파일
+*.swp
+*~
+
+#도커 local
+Dockerfile-local
+
+#application-dev
+application-local.yml
+
+#docker-compose
+docker-compose-local.yml
+
+# Spring Boot DevTools
+spring-boot-devtools/s
+
+**/resources/*.json

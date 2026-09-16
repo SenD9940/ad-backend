@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: multi-modal-ad-api
+  profiles:
+    # IDE 실행은 local, 배포 컨테이너는 SPRING_PROFILES_ACTIVE=prod를 사용합니다.
+    default: prod
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB
+      max-request-size: 200MB
+  web:
+    resources:
+      static-locations: classpath:/static/
+  jpa:
+    properties:
+      hibernate:
+        # LocalDateTime + DATETIME은 서울 벽시계로 저장합니다. jdbc.time_zone을 추가하지 않습니다.
+        format_sql: false
+
+server:
+  port: ${SERVER_PORT:8380}
+  shutdown: graceful
+
+app:
+  cors:
+    allowed-origins: http://localhost:3000,http://localhost:3001,http://localhost:3100
+  meta:
+    app-id: ${META_APP_ID:}
+    app-secret: ${META_APP_SECRET:}
+    redirect-uri: ${META_REDIRECT_URI:http://localhost:3100/meta/callback}
+    api-version: ${META_API_VERSION:v26.0}
+    config-id: ${META_LOGIN_CONFIG_ID:}
+  ai-creative:
+    api-key: ${OPENAI_API_KEY:}
+    model: ${AI_CREATIVE_MODEL:gpt-image-2}
+    copy-model: ${AI_COPY_MODEL:gpt-4.1-mini}
+    quality: ${AI_CREATIVE_QUALITY:medium}
+    max-pending-per-user: 3
+    worker-enabled: ${AI_CREATIVE_WORKER_ENABLED:true}
+    poll-ms: 3000
+  ai-studio:
+    worker-enabled: ${AI_STUDIO_WORKER_ENABLED:true}
+    publish-delay-ms: 20000
+    analysis-cron: "0 10 1 * * *"
+    analysis-zone: Asia/Seoul
+  ai-insight:
+    enabled: true
+    worker-enabled: ${AI_INSIGHT_WORKER_ENABLED:true}
+    model: ${AI_INSIGHT_MODEL:gpt-4.1-mini}
+    max-pending-per-user: 20
+    poll-ms: 5000
+
+token:
+  access-token:
+    plus-hour: 1
+  refresh-token:
+    plus-hour: 12
+
+# OAuth 토큰 교환 정보가 HTTP 클라이언트 로그에 남지 않도록 합니다.
+logging:
+  level:
+    org.springframework.web.client.DefaultRestClient: WARN
