@@ -14,8 +14,8 @@ public interface UserProfileRepository extends JpaRepository<UserProfileEntity, 
             select p from UserProfileEntity p
             join fetch p.user u
             where p.mailNotificationEnabled = true
-              and p.status = com.jihyunchangui.db.userprofile.enums.UserProfileStatus.REGISTERED
-              and u.status = com.jihyunchangui.db.user.enums.UserStatus.REGISTERED
+              and p.status = com.orinan.db.userprofile.enums.UserProfileStatus.REGISTERED
+              and u.status = com.orinan.db.user.enums.UserStatus.REGISTERED
             """)
     List<UserProfileEntity> findAllMailNotificationEnabled();
 }
