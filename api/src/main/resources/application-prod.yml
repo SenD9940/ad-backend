@@ -22,19 +22,21 @@ spring:
     timeout-per-shutdown-phase: 30s
 
 app:
-  cors:
-    # 호스트만 입력합니다. 예: app.example.com (https:// 및 경로 제외)
-    allowed-origins: https://${FRONTEND_DOMAIN}
   meta:
     app-id: ${META_APP_ID}
     app-secret: ${META_APP_SECRET}
     redirect-uri: ${META_REDIRECT_URI}
   ai-creative:
     api-key: ${OPENAI_API_KEY}
+    model: ${OPENAI_API_MODEL}
+    quality: ${OPENAI_IMAGE_QULITY}
+    max-pending-per-user: ${OPENAI_MAX_PENDING_PER_USER}
+    worker-enabled: true
+    poll-ms: 3000
   aws:
     s3:
       bucket: ${S3_BUCKET_NAME}
-      key-prefix: ${S3_KEY_PREFIX:multi-modal-ad}
+      key-prefix: ${S3_KEY_PREFIX:ad-backend}
 
 aes:
   key:
