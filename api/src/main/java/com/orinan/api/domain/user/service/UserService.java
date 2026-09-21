@@ -49,7 +49,11 @@ public class UserService {
     }
 
     public UserEntity findByEmailAndStatusWithThrow(String email, UserStatus status) {
-        return userRepository.findByEmailAndStatus(email, status).orElseThrow(() -> new ApiException(UserErrorCode.USER_NOT_FOUND));
+        return userRepository.findByEmailAndStatus(email.strip(), status).orElseThrow(() -> new ApiException(UserErrorCode.USER_NOT_FOUND));
+    }
+
+    public boolean existsRegisteredByEmail(String email) {
+        return userRepository.existsByEmailIgnoreCaseAndStatus(email.strip(), UserStatus.REGISTERED);
     }
 
     public List<UserEntity> findAllByStatus(UserStatus status) {

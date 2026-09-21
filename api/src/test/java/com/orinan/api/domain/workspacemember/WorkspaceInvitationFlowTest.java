@@ -84,7 +84,7 @@ class WorkspaceInvitationFlowTest {
         var workspace = WorkspaceEntity.builder().id(10L).name("테스트 워크스페이스").user(owner).build();
         var recipient = UserEntity.builder().id(20L).email("member@example.com").build();
         when(workspaceService.findByIdWithThrow(10L)).thenReturn(workspace);
-        when(userService.findByIdAndStatusWithThrow(20L, UserStatus.REGISTERED)).thenReturn(recipient);
+        when(userService.findByEmailAndStatusWithThrow("member@example.com", UserStatus.REGISTERED)).thenReturn(recipient);
     }
 
     @Test
@@ -157,7 +157,7 @@ class WorkspaceInvitationFlowTest {
     @Test
     void mailFailureRollsBackNewInvitation() {
         doThrow(new MailSendException("SMTP unavailable")).when(mailSender).send(any(SimpleMailMessage.class));
-        var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L)), 1L);
+        var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(result).hasSize(1);
         assertThat(result.get(0).isSuccess()).isFalse();
         assertThat(result.get(0).getMessage()).isEqualTo("초대 메일 발송에 실패했습니다");
@@ -169,7 +169,7 @@ class WorkspaceInvitationFlowTest {
     void failedResendPreservesPreviouslySentLink() {
         String token = inviteAndGetToken();
         doThrow(new MailSendException("SMTP unavailable")).when(mailSender).send(any(SimpleMailMessage.class));
-        var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L)), 1L);
+        var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(result).hasSize(1);
         assertThat(result.get(0).isSuccess()).isFalse();
         assertThat(result.get(0).getMessage()).isEqualTo("초대 메일 발송에 실패했습니다");
@@ -179,7 +179,7 @@ class WorkspaceInvitationFlowTest {
 
     @Test
     void onlyOwnerCanInvite() {
-        assertThatThrownBy(() -> business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L)), 30L))
+        assertThatThrownBy(() -> business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 30L))
                 .isInstanceOf(ApiException.class);
         assertThat(invitations.count()).isZero();
         verifyNoInteractions(mailSender);
@@ -188,7 +188,7 @@ class WorkspaceInvitationFlowTest {
     @Test
     void existingMemberCannotBeInvited() {
         members.saveAndFlush(WorkspaceMemberEntity.builder().id(memberId).role(WorkspaceMemberRole.MEMBER).build());
-        var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L)), 1L);
+        var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(result.get(0).isSuccess()).isFalse();
         assertThat(result.get(0).getMessage()).isEqualTo("이미 등록된 워크스페이스 멤버입니다");
         assertThat(invitations.count()).isZero();
@@ -210,9 +210,9 @@ class WorkspaceInvitationFlowTest {
 
     @Test
     void batchPreservesSuccessfulInvitationsAndContinuesAfterMailFailure() {
-        when(userService.findByIdAndStatusWithThrow(30L, UserStatus.REGISTERED))
+        when(userService.findByEmailAndStatusWithThrow("failed@example.com", UserStatus.REGISTERED))
                 .thenReturn(UserEntity.builder().id(30L).email("failed@example.com").build());
-        when(userService.findByIdAndStatusWithThrow(40L, UserStatus.REGISTERED))
+        when(userService.findByEmailAndStatusWithThrow("other@example.com", UserStatus.REGISTERED))
                 .thenReturn(UserEntity.builder().id(40L).email("other@example.com").build());
         doAnswer(invocation -> {
             SimpleMailMessage message = invocation.getArgument(0);
@@ -222,9 +222,9 @@ class WorkspaceInvitationFlowTest {
             return null;
         }).when(mailSender).send(any(SimpleMailMessage.class));
 
-        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L, 30L, 40L)), 1L);
+        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com", "failed@example.com", "other@example.com")), 1L);
 
-        assertThat(results).extracting(result -> result.getUserId()).containsExactly(20L, 30L, 40L);
+        assertThat(results).extracting(result -> result.getEmail()).containsExactly("member@example.com", "failed@example.com", "other@example.com");
         assertThat(results).extracting(result -> result.isSuccess()).containsExactly(true, false, true);
         assertThat(invitations.findAll()).extracting(invitation -> invitation.getId().getUserId())
                 .containsExactlyInAnyOrder(20L, 40L);
@@ -242,7 +242,7 @@ class WorkspaceInvitationFlowTest {
 
     @Test
     void batchDeduplicatesRecipientsWithoutInvalidatingTheirLink() {
-        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L, 20L)), 1L);
+        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com", "MEMBER@EXAMPLE.COM")), 1L);
         assertThat(results).hasSize(1);
         assertThat(results.get(0).isSuccess()).isTrue();
         var captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
@@ -253,14 +253,14 @@ class WorkspaceInvitationFlowTest {
 
     @Test
     void batchReportsInvalidRecipientsAndStillInvitesValidUser() {
-        when(userService.findByIdAndStatusWithThrow(30L, UserStatus.REGISTERED))
+        when(userService.findByEmailAndStatusWithThrow("missing@example.com", UserStatus.REGISTERED))
                 .thenThrow(new ApiException(UserErrorCode.USER_NOT_FOUND));
-        when(userService.findByIdAndStatusWithThrow(40L, UserStatus.REGISTERED))
+        when(userService.findByEmailAndStatusWithThrow("existing@example.com", UserStatus.REGISTERED))
                 .thenReturn(UserEntity.builder().id(40L).email("existing@example.com").build());
         members.saveAndFlush(WorkspaceMemberEntity.builder().id(new WorkspaceMemberId(10L, 40L))
                 .role(WorkspaceMemberRole.MEMBER).build());
 
-        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(30L, 40L, 20L)), 1L);
+        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("missing@example.com", "existing@example.com", "member@example.com")), 1L);
 
         assertThat(results).extracting(result -> result.isSuccess()).containsExactly(false, false, true);
         assertThat(results.get(0).getMessage()).isEqualTo(UserErrorCode.USER_NOT_FOUND.getDescription());
@@ -270,21 +270,21 @@ class WorkspaceInvitationFlowTest {
     }
 
     @Test
-    void batchRequestRequiresOneToFiftyPositiveNonNullUserIds() {
+    void batchRequestRequiresOneToFiftyValidNonBlankEmails() {
         try (var factory = jakarta.validation.Validation.buildDefaultValidatorFactory()) {
             var validator = factory.getValidator();
-            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, List.of(20L, 30L)))).isEmpty();
+            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com", "other@example.com")))).isEmpty();
             assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, null))).isNotEmpty();
             assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, List.of()))).isNotEmpty();
-            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, List.of(0L)))).isNotEmpty();
-            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, java.util.Arrays.asList(20L, null)))).isNotEmpty();
-            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, java.util.Collections.nCopies(51, 20L)))).isNotEmpty();
+            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, List.of("not-an-email")))).isNotEmpty();
+            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, java.util.Arrays.asList("member@example.com", null)))).isNotEmpty();
+            assertThat(validator.validate(new WorkspaceMemberInviteRequest(10L, java.util.Collections.nCopies(51, "member@example.com")))).isNotEmpty();
         }
     }
 
     private String inviteAndGetToken() {
         clearInvocations(mailSender);
-        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of(20L)), 1L);
+        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(results).hasSize(1);
         assertThat(results.get(0).isSuccess()).isTrue();
         var captor = ArgumentCaptor.forClass(SimpleMailMessage.class);

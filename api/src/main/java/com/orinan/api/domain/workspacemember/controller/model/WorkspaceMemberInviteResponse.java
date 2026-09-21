@@ -7,7 +7,7 @@ import lombok.Data;
 @AllArgsConstructor
 public class WorkspaceMemberInviteResponse {
 
-    private Long userId;
+    private String email;
 
     private boolean success;
 

@@ -27,6 +27,10 @@ public class UserBusiness{
     private final PasswordEncoder passwordEncoder;
     private final TokenBusiness tokenBusiness;
 
+    public boolean existsByEmail(String email) {
+        return userService.existsRegisteredByEmail(email);
+    }
+
     @Transactional
     public UserResponse register(UserRegisterRequest request) {
         userService.validateRegistration(request.getEmail(), request.getPassword());

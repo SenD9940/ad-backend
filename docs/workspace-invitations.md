@@ -1,6 +1,6 @@
 # 워크스페이스 이메일 초대
 
-소유자가 등록된 사용자들의 `user_ids`로 초대하면 각 계정의 이메일로 개별 참여 링크를 보냅니다. 초대받은 계정이 로그인하고 수락해야 `workspace_members`에 등록됩니다. 워크스페이스 생성자의 자동 등록과 기존 추방 API는 유지됩니다.
+소유자가 `emails` 목록으로 초대하면 가입된 계정을 찾아 해당 계정의 이메일로 개별 참여 링크를 보냅니다. 초대받은 계정이 로그인하고 수락해야 `workspace_members`에 등록됩니다. 워크스페이스 생성자의 자동 등록과 기존 추방 API는 유지됩니다.
 
 ## 설정
 
@@ -27,29 +27,39 @@ MAIL_STARTTLS_ENABLE=true
 
 ## API와 프런트엔드 연결
 
-두 API 모두 로그인된 사용자의 `Authorization: Bearer <accessToken>`이 필요합니다.
+아래 API는 모두 로그인된 사용자의 `Authorization: Bearer <accessToken>`이 필요합니다.
 
 ### 초대
 
 `POST /api/workspace-members/invite`
 
 ```json
-{"workspace_id": 1, "user_ids": [2, 3, 4]}
+{"workspace_id": 1, "emails": ["member@example.com", "other@example.com"]}
 ```
 
-소유자만 호출할 수 있습니다. 기존 `user_id` 대신 `user_ids` 배열을 보내야 합니다. 한 번에 1~50개 ID를 받으며, 중복 ID는 첫 등장 순서대로 한 번만 처리합니다. 한 명만 초대할 때도 `[2]`처럼 배열로 보냅니다.
+소유자만 호출할 수 있습니다. 기존 `user_ids` 대신 `emails` 배열을 보내야 합니다. 한 번에 1~50개 이메일을 받으며, 대소문자를 구분하지 않고 중복을 제거해 첫 등장 순서대로 한 번만 처리합니다. 한 명만 초대할 때도 `["member@example.com"]`처럼 배열로 보냅니다. 이메일은 필수이며 올바른 형식과 최대 254자 제한을 검증합니다.
 
-요청 안에서 사용자별로 순차 발송하고 결과를 `Api<List<WorkspaceMemberInviteResponse>>`의 `body`에 반환합니다. 각 발송은 독립된 트랜잭션이므로 일부 사용자 조회·메일 전송·DB 저장이 실패해도 나머지는 계속 처리하고 성공한 초대를 유지합니다. 이미 멤버인 사용자도 개별 실패 결과로 반환합니다.
+요청 안에서 사용자별로 순차 발송하고 결과를 `Api<List<WorkspaceMemberInviteResponse>>`의 `body`에 반환합니다. 각 발송은 독립된 트랜잭션이므로 일부 사용자 조회·메일 전송·DB 저장이 실패해도 나머지는 계속 처리하고 성공한 초대를 유지합니다. 이미 멤버인 사용자와 미가입·탈퇴 계정도 개별 실패 결과로 반환합니다. 초대 대상은 이메일로 찾지만 수락 권한은 해당 계정의 사용자 ID로 확인합니다.
 
 ```json
 [
-  {"user_id": 2, "success": true, "message": "초대 메일을 발송했습니다"},
-  {"user_id": 3, "success": false, "message": "초대 메일 발송에 실패했습니다"},
-  {"user_id": 4, "success": false, "message": "이미 등록된 워크스페이스 멤버입니다"}
+  {"email": "member@example.com", "success": true, "message": "초대 메일을 발송했습니다"},
+  {"email": "other@example.com", "success": false, "message": "초대 메일 발송에 실패했습니다"},
+  {"email": "existing@example.com", "success": false, "message": "이미 등록된 워크스페이스 멤버입니다"}
 ]
 ```
 
 배치 응답의 HTTP 200은 모든 발송의 성공을 뜻하지 않습니다. 프런트엔드는 각 항목의 `success`를 확인하고 실패한 사용자만 재시도해야 합니다. 워크스페이스가 없거나 요청자가 소유자가 아니거나 입력값 검증이 실패하면 메일을 보내지 않고 요청 전체를 거절합니다.
+
+### 가입 여부 확인
+
+`POST /api/users/exists`
+
+```json
+{"email": "member@example.com"}
+```
+
+로그인이 필요합니다. 대소문자를 구분하지 않고 `REGISTERED` 계정의 존재 여부만 확인합니다. 응답은 `Api<Boolean>`이며 `body`가 `true` 또는 `false`입니다. 사용자 ID나 프로필 정보는 반환하지 않습니다. 미가입·탈퇴 계정은 `false`, 잘못된 이메일은 HTTP 400입니다.
 
 ### 참여 수락
 

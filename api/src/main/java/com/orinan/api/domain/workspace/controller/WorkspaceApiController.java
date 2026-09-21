@@ -32,7 +32,7 @@ public class WorkspaceApiController {
     @GetMapping("/{workspaceId}")
     public Api<WorkspaceResponse> getMyWorkspace(
             @UserSession UserResponse user,
-            @PathVariable("workspaceId") Long workspaceId
+            @PathVariable Long workspaceId
     ){
         var response = workspaceBusiness.getMyWorkspace(workspaceId, user.getId());
         return Api.OK(response);

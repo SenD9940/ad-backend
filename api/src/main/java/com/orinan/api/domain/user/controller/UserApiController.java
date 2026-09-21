@@ -3,6 +3,7 @@ package com.orinan.api.domain.user.controller;
 import com.orinan.api.annotation.UserSession;
 import com.orinan.api.common.api.Api;
 import com.orinan.api.domain.user.controller.model.UserResponse;
+import com.orinan.api.domain.user.controller.model.UserExistsRequest;
 import com.orinan.api.domain.user.controller.model.UserLogoutRequest;
 import com.orinan.api.domain.user.business.UserBusiness;
 import com.orinan.api.domain.token.helper.AuthorizationTokens;
@@ -26,6 +27,11 @@ public class UserApiController {
 
     private final UserProfileBusiness userProfileBusiness;
     private final UserBusiness userBusiness;
+
+    @PostMapping("/exists")
+    public Api<Boolean> exists(@Valid @RequestBody UserExistsRequest request) {
+        return Api.OK(userBusiness.existsByEmail(request.getEmail()));
+    }
 
     @GetMapping("/me")
     public Api<UserResponse> me(@UserSession UserResponse user) {

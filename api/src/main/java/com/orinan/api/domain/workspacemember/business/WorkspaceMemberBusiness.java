@@ -23,8 +23,8 @@ import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 
 @Business
 @RequiredArgsConstructor
@@ -42,18 +42,22 @@ public class WorkspaceMemberBusiness {
             throw new ApiException(UserErrorCode.USER_PERMISSION_DENY);
         }
         var results = new ArrayList<WorkspaceMemberInviteResponse>();
-        for (Long recipientId : new LinkedHashSet<>(request.getUserIds())) {
+        var emails = request.getEmails().stream()
+                .map(email -> email.strip().toLowerCase(Locale.ROOT))
+                .distinct()
+                .toList();
+        for (String email : emails) {
             try {
-                var recipient = userService.findByIdAndStatusWithThrow(recipientId, UserStatus.REGISTERED);
-                workspaceMemberService.validateNotMember(new WorkspaceMemberId(request.getWorkspaceId(), recipientId));
+                var recipient = userService.findByEmailAndStatusWithThrow(email, UserStatus.REGISTERED);
+                workspaceMemberService.validateNotMember(new WorkspaceMemberId(request.getWorkspaceId(), recipient.getId()));
                 workspaceInvitationService.send(workspace, recipient);
-                results.add(new WorkspaceMemberInviteResponse(recipientId, true, "초대 메일을 발송했습니다"));
+                results.add(new WorkspaceMemberInviteResponse(email, true, "초대 메일을 발송했습니다"));
             } catch (ApiException e) {
-                results.add(new WorkspaceMemberInviteResponse(recipientId, false, e.getDescription()));
+                results.add(new WorkspaceMemberInviteResponse(email, false, e.getDescription()));
             } catch (MailException e) {
-                results.add(new WorkspaceMemberInviteResponse(recipientId, false, "초대 메일 발송에 실패했습니다"));
+                results.add(new WorkspaceMemberInviteResponse(email, false, "초대 메일 발송에 실패했습니다"));
             } catch (DataAccessException | TransactionException e) {
-                results.add(new WorkspaceMemberInviteResponse(recipientId, false, "초대 저장에 실패했습니다"));
+                results.add(new WorkspaceMemberInviteResponse(email, false, "초대 저장에 실패했습니다"));
             }
         }
         return results;
