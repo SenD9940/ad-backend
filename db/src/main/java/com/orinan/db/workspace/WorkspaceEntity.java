@@ -25,7 +25,7 @@ public class WorkspaceEntity extends BaseEntity {
 
     private String name;
 
-    @OneToOne(cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
+    @ManyToOne(cascade = CascadeType.PERSIST, fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private UserEntity user;
 

@@ -8,6 +8,7 @@ import com.orinan.api.domain.workspace.controller.model.WorkspaceRegisterRequest
 import com.orinan.api.domain.workspace.controller.model.WorkspaceResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,6 +26,15 @@ public class WorkspaceApiController {
     @GetMapping("/me")
     public Api<List<WorkspaceResponse>> getMyWorkspaces(@UserSession UserResponse user){
         var response = workspaceBusiness.getMyWorkspaces(user.getId());
+        return Api.OK(response);
+    }
+
+    @GetMapping("/{workspaceId}")
+    public Api<WorkspaceResponse> getMyWorkspace(
+            @UserSession UserResponse user,
+            @PathVariable("workspaceId") Long workspaceId
+    ){
+        var response = workspaceBusiness.getMyWorkspace(workspaceId, user.getId());
         return Api.OK(response);
     }
 
