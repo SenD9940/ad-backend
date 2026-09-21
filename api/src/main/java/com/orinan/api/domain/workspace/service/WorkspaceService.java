@@ -19,6 +19,10 @@ public class WorkspaceService {
         return workspaceRepository.findAllByUserIdOrderByIdDesc(userId);
     }
 
+    public List<WorkspaceEntity> findAllJoinedByUserId(Long userId){
+        return workspaceRepository.findAllJoinedByUserId(userId);
+    }
+
     public WorkspaceEntity findByIdWithThrow(Long id){
         return workspaceRepository.findById(id)
                 .orElseThrow(() -> new ApiException(ApiCode.BAD_REQUEST, "존재하지 않는 워크스페이스입니다"));

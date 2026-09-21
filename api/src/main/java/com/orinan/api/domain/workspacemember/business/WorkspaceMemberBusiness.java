@@ -36,6 +36,18 @@ public class WorkspaceMemberBusiness {
     private final UserService userService;
     private final WorkspaceInvitationService workspaceInvitationService;
 
+    @Transactional(readOnly = true)
+    public List<WorkspaceMemberResponse> getMembers(Long workspaceId, Long userId){
+        var workspace = workspaceService.findByIdWithThrow(workspaceId);
+        if (!workspace.getUser().getId().equals(userId)
+                && !workspaceMemberService.exists(new WorkspaceMemberId(workspaceId, userId))) {
+            throw new ApiException(UserErrorCode.USER_PERMISSION_DENY);
+        }
+        return workspaceMemberService.findAllByWorkspaceId(workspaceId).stream()
+                .map(workspaceMemberConverter::toResponse)
+                .toList();
+    }
+
     public List<WorkspaceMemberInviteResponse> invite(WorkspaceMemberInviteRequest request, Long userId){
         var workspace = workspaceService.findByIdWithThrow(request.getWorkspaceId());
         if (!workspace.getUser().getId().equals(userId)) {

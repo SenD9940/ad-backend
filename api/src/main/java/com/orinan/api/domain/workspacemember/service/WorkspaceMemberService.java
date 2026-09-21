@@ -9,11 +9,21 @@ import com.orinan.db.workspacemember.WorkspaceMemberRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class WorkspaceMemberService {
 
     private final WorkspaceMemberRepository workspaceMemberRepository;
+
+    public List<WorkspaceMemberEntity> findAllByWorkspaceId(Long workspaceId){
+        return workspaceMemberRepository.findAllByIdWorkspaceIdOrderByRegisteredAtAscIdUserIdAsc(workspaceId);
+    }
+
+    public boolean exists(WorkspaceMemberId id){
+        return workspaceMemberRepository.existsById(id);
+    }
 
     public WorkspaceMemberEntity save(WorkspaceMemberEntity entity){
         validateNotMember(entity.getId());

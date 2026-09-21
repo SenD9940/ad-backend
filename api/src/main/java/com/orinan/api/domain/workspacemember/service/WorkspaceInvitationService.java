@@ -9,20 +9,25 @@ import com.orinan.db.workspace.WorkspaceEntity;
 import com.orinan.db.workspaceinvitation.WorkspaceInvitationEntity;
 import com.orinan.db.workspaceinvitation.WorkspaceInvitationRepository;
 import com.orinan.db.workspacemember.WorkspaceMemberId;
+import jakarta.mail.MessagingException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.MailPreparationException;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.thymeleaf.TemplateEngine;
+import org.thymeleaf.context.Context;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.UUID;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +35,7 @@ public class WorkspaceInvitationService {
 
     private final WorkspaceInvitationRepository workspaceInvitationRepository;
     private final JavaMailSender mailSender;
+    private final TemplateEngine templateEngine;
 
     @Value("${app.workspace-invitation.accept-url:}")
     private String acceptUrl;
@@ -59,21 +65,33 @@ public class WorkspaceInvitationService {
         String link = UriComponentsBuilder.fromUriString(acceptUrl)
                 .queryParam("token", token)
                 .build().encode().toUriString();
-        var message = new SimpleMailMessage();
-        message.setFrom(from);
-        message.setTo(recipient.getEmail());
-        message.setSubject("워크스페이스 초대");
-        message.setText("""
+        String text = """
                 '%s' 워크스페이스에 초대되었습니다.
 
-                초대받은 계정으로 로그인한 뒤 아래 링크에서 참여를 수락해 주세요.
+                초대받은 계정(%s)으로 로그인한 뒤 아래 링크에서 참여를 수락해 주세요.
                 참여하기: %s
 
                 이 링크는 24시간 동안 유효하며, 한 번만 사용할 수 있습니다.
                 초대 메일을 다시 받았다면 가장 최근 링크를 사용해 주세요.
-                """.formatted(workspace.getName(), link));
-        // 전송 실패 예외를 호출자에게 전달하여 초대 저장도 함께 롤백합니다.
-        mailSender.send(message);
+                """.formatted(workspace.getName(), recipient.getEmail(), link);
+        var context = new Context(Locale.KOREAN);
+        context.setVariable("workspaceName", workspace.getName());
+        context.setVariable("recipientEmail", recipient.getEmail());
+        context.setVariable("inviteUrl", link);
+        String html = templateEngine.process("mail/workspace-invitation", context);
+
+        try {
+            var message = mailSender.createMimeMessage();
+            var helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
+            helper.setFrom(from);
+            helper.setTo(recipient.getEmail());
+            helper.setSubject("워크스페이스에 초대되었습니다");
+            helper.setText(text, html);
+            // 전송 실패 예외를 호출자에게 전달하여 초대 저장도 함께 롤백합니다.
+            mailSender.send(message);
+        } catch (MessagingException e) {
+            throw new MailPreparationException("초대 메일을 생성하지 못했습니다", e);
+        }
     }
 
     public WorkspaceInvitationEntity findValidWithThrow(String token, Long authenticatedUserId){

@@ -24,8 +24,18 @@ public class WorkspaceApiController {
     private final WorkspaceBusiness workspaceBusiness;
 
     @GetMapping("/me")
-    public Api<List<WorkspaceResponse>> getMyWorkspaces(@UserSession UserResponse user){
+    public Api<List<WorkspaceResponse>> getMyWorkspaces(
+            @UserSession UserResponse user
+    ){
         var response = workspaceBusiness.getMyWorkspaces(user.getId());
+        return Api.OK(response);
+    }
+
+    @GetMapping("/joined")
+    public Api<List<WorkspaceResponse>> getJoinedWorkspaces(
+            @UserSession UserResponse user
+    ){
+        var response = workspaceBusiness.getJoinedWorkspaces(user.getId());
         return Api.OK(response);
     }
 

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>워크스페이스 초대</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f5f9;color:#17243b;font-family:Arial,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;mso-hide:all;">새로운 워크스페이스에 초대되었습니다. 초대를 수락하고 함께 시작해 보세요.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f5f9;">
+    <tr>
+        <td align="center" style="padding:40px 16px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+                <tr>
+                    <td style="padding:0 8px 20px;font-size:12px;font-weight:700;letter-spacing:2px;color:#59677e;">WORKSPACE INVITATION</td>
+                </tr>
+                <tr>
+                    <td style="padding:0;background-color:#ffffff;border:1px solid #e3e8f0;border-radius:16px;">
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                            <tr>
+                                <td style="padding:32px 28px 0;">
+                                    <span style="display:inline-block;background-color:#edf2ff;color:#3459cc;padding:7px 12px;border-radius:6px;font-size:12px;font-weight:700;">함께하는 새로운 공간</span>
+                                    <h1 style="margin:22px 0 12px;font-size:28px;line-height:1.4;font-weight:700;letter-spacing:-1px;">워크스페이스에<br>초대되었습니다</h1>
+                                    <p style="margin:0;font-size:15px;line-height:1.8;color:#65718a;">아래 초대를 수락하고<br>팀과 함께 작업을 시작해 보세요.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:24px 28px;">
+                                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f9fc;border:1px solid #e9edf4;border-radius:10px;">
+                                        <tr>
+                                            <td style="padding:20px;">
+                                                <p style="margin:0 0 8px;font-size:12px;color:#78859a;">초대받은 워크스페이스</p>
+                                                <p th:text="${workspaceName}" style="margin:0;font-size:21px;font-weight:700;line-height:1.5;word-break:break-all;">우리 팀 워크스페이스</p>
+                                                <p style="margin:16px 0 4px;font-size:12px;color:#78859a;">참여할 계정</p>
+                                                <p th:text="${recipientEmail}" style="margin:0;font-size:14px;line-height:1.6;color:#495872;word-break:break-all;">member@example.com</p>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td align="center" style="padding:0 28px;">
+                                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                                        <tr>
+                                            <td align="center" bgcolor="#3459cc" style="border-radius:8px;mso-padding-alt:16px 24px;">
+                                                <a th:href="${inviteUrl}" href="https://example.com/invite" style="display:block;padding:16px 24px;border:1px solid #3459cc;border-radius:8px;font-size:16px;line-height:1.5;font-weight:700;color:#ffffff;text-decoration:none;">워크스페이스 참여하기 &rarr;</a>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                    <p style="margin:14px 0 0;font-size:13px;line-height:1.7;color:#78859a;">초대받은 계정으로 로그인한 뒤 수락해 주세요.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding:26px 28px 30px;">
+                                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #edf0f5;">
+                                        <tr>
+                                            <td style="padding-top:20px;">
+                                                <p style="margin:0 0 6px;font-size:13px;line-height:1.8;color:#495872;"><strong>발송 후 24시간 동안 유효한 초대입니다.</strong></p>
+                                                <p style="margin:0;font-size:12px;line-height:1.8;color:#78859a;">링크는 한 번만 사용할 수 있습니다.<br>초대 메일을 다시 받았다면 가장 최근 링크를 이용해 주세요.</p>
+                                                <p style="margin:20px 0 8px;font-size:12px;line-height:1.7;color:#78859a;">버튼이 열리지 않으면 아래 주소를 복사해 브라우저에 붙여 넣어 주세요.</p>
+                                                <a th:href="${inviteUrl}" th:text="${inviteUrl}" href="https://example.com/invite" style="font-size:12px;line-height:1.8;color:#3459cc;text-decoration:underline;word-break:break-all;overflow-wrap:anywhere;">https://example.com/invite</a>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td align="center" style="padding:22px 16px 0;font-size:12px;line-height:1.8;color:#8c97a9;">예상하지 못한 초대라면 이 메일을 무시하셔도 됩니다.</td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

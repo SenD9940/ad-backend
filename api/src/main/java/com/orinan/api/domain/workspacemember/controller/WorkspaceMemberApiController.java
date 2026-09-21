@@ -11,6 +11,8 @@ import com.orinan.api.domain.workspacemember.controller.model.WorkspaceMemberKic
 import com.orinan.api.domain.workspacemember.controller.model.WorkspaceMemberResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +26,15 @@ import java.util.List;
 public class WorkspaceMemberApiController {
 
     private final WorkspaceMemberBusiness workspaceMemberBusiness;
+
+    @GetMapping("/{workspaceId}")
+    public Api<List<WorkspaceMemberResponse>> getMembers(
+            @UserSession UserResponse user,
+            @PathVariable("workspaceId") Long workspaceId
+    ){
+        var response = workspaceMemberBusiness.getMembers(workspaceId, user.getId());
+        return Api.OK(response);
+    }
 
     @PostMapping("/invite")
     public Api<List<WorkspaceMemberInviteResponse>> invite(

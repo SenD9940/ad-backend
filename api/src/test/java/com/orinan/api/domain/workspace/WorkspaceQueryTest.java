@@ -11,6 +11,7 @@ import com.orinan.api.domain.workspacemember.service.WorkspaceMemberService;
 import com.orinan.db.user.UserEntity;
 import com.orinan.db.workspace.WorkspaceEntity;
 import com.orinan.db.workspace.WorkspaceRepository;
+import com.orinan.db.workspacemember.WorkspaceMemberId;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -23,9 +24,10 @@ import static org.mockito.Mockito.*;
 class WorkspaceQueryTest {
 
     private final WorkspaceRepository repository = mock(WorkspaceRepository.class);
+    private final WorkspaceMemberService memberService = mock(WorkspaceMemberService.class);
     private final WorkspaceBusiness business = new WorkspaceBusiness(
             new WorkspaceService(repository), new WorkspaceConverter(),
-            mock(UserService.class), mock(WorkspaceMemberService.class));
+            mock(UserService.class), memberService);
 
     @Test
     void returnsAllWorkspacesFilteredByLoggedInOwner() {
@@ -59,6 +61,25 @@ class WorkspaceQueryTest {
     void anotherUserCannotReadWorkspaceByGuessingItsId() {
         when(repository.findById(10L)).thenReturn(Optional.of(workspace(10L, 1L)));
 
+        assertThatThrownBy(() -> business.getMyWorkspace(10L, 2L))
+                .isInstanceOfSatisfying(ApiException.class, exception ->
+                        assertThat(exception.getCodeIfs()).isEqualTo(UserErrorCode.USER_PERMISSION_DENY));
+    }
+
+    @Test
+    void currentMemberCanReadJoinedWorkspace() {
+        when(repository.findById(10L)).thenReturn(Optional.of(workspace(10L, 1L)));
+        when(memberService.exists(new WorkspaceMemberId(10L, 2L))).thenReturn(true);
+
+        assertThat(business.getMyWorkspace(10L, 2L).getId()).isEqualTo(10L);
+    }
+
+    @Test
+    void kickedMemberLosesReadAccess() {
+        when(repository.findById(10L)).thenReturn(Optional.of(workspace(10L, 1L)));
+        when(memberService.exists(new WorkspaceMemberId(10L, 2L))).thenReturn(true, false);
+
+        assertThat(business.getMyWorkspace(10L, 2L).getId()).isEqualTo(10L);
         assertThatThrownBy(() -> business.getMyWorkspace(10L, 2L))
                 .isInstanceOfSatisfying(ApiException.class, exception ->
                         assertThat(exception.getCodeIfs()).isEqualTo(UserErrorCode.USER_PERMISSION_DENY));

@@ -34,7 +34,16 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseBuilder;
 import org.springframework.jdbc.datasource.embedded.EmbeddedDatabaseType;
 import org.springframework.mail.MailSendException;
-import org.springframework.mail.SimpleMailMessage;
+import jakarta.mail.MessagingException;
+import jakarta.mail.Multipart;
+import jakarta.mail.Part;
+import jakarta.mail.Session;
+import jakarta.mail.internet.MimeMessage;
+import java.io.IOException;
+import java.util.Properties;
+import org.thymeleaf.TemplateEngine;
+import org.thymeleaf.spring6.SpringTemplateEngine;
+import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
@@ -80,6 +89,7 @@ class WorkspaceInvitationFlowTest {
         invitations.deleteAll();
         members.deleteAll();
         reset(mailSender, workspaceService, userService);
+        when(mailSender.createMimeMessage()).thenAnswer(invocation -> new MimeMessage(Session.getInstance(new Properties())));
         var owner = UserEntity.builder().id(1L).build();
         var workspace = WorkspaceEntity.builder().id(10L).name("테스트 워크스페이스").user(owner).build();
         var recipient = UserEntity.builder().id(20L).email("member@example.com").build();
@@ -100,6 +110,38 @@ class WorkspaceInvitationFlowTest {
                 .digest(token.getBytes(StandardCharsets.UTF_8)));
         assertThat(invitation.getTokenHash()).isEqualTo(hash).isNotEqualTo(token);
         assertThat(invitation.getExpiresAt()).isAfter(SeoulDateTimes.now().plusHours(23));
+    }
+
+    @Test
+    void htmlAndPlainTextContainSameInvitationLinkAndRecipient() {
+        String token = inviteAndGetToken();
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mailSender).send(captor.capture());
+        var message = captor.getValue();
+        String link = "https://frontend.example.com/invitations/accept?token=" + token;
+
+        assertThat(mailBody(message, "text/html"))
+                .contains("워크스페이스 참여하기", "테스트 워크스페이스", "member@example.com", "24시간")
+                .contains("href=\"" + link + "\"")
+                .doesNotContain("th:text", "th:href", "${inviteUrl}");
+        assertThat(mailBody(message, "text/plain")).contains(link, "member@example.com", "24시간");
+    }
+
+    @Test
+    void htmlEscapesUserSuppliedWorkspaceName() {
+        var workspace = WorkspaceEntity.builder().id(10L)
+                .name("우리 팀 <script>alert(1)</script> & 디자인")
+                .user(UserEntity.builder().id(1L).build()).build();
+        when(workspaceService.findByIdWithThrow(10L)).thenReturn(workspace);
+
+        var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
+
+        assertThat(results.get(0).isSuccess()).isTrue();
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mailSender).send(captor.capture());
+        assertThat(mailBody(captor.getValue(), "text/html"))
+                .contains("&lt;script&gt;", "&amp;")
+                .doesNotContain("<script>");
     }
 
     @Test
@@ -156,7 +198,7 @@ class WorkspaceInvitationFlowTest {
 
     @Test
     void mailFailureRollsBackNewInvitation() {
-        doThrow(new MailSendException("SMTP unavailable")).when(mailSender).send(any(SimpleMailMessage.class));
+        doThrow(new MailSendException("SMTP unavailable")).when(mailSender).send(any(MimeMessage.class));
         var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(result).hasSize(1);
         assertThat(result.get(0).isSuccess()).isFalse();
@@ -168,7 +210,7 @@ class WorkspaceInvitationFlowTest {
     @Test
     void failedResendPreservesPreviouslySentLink() {
         String token = inviteAndGetToken();
-        doThrow(new MailSendException("SMTP unavailable")).when(mailSender).send(any(SimpleMailMessage.class));
+        doThrow(new MailSendException("SMTP unavailable")).when(mailSender).send(any(MimeMessage.class));
         var result = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(result).hasSize(1);
         assertThat(result.get(0).isSuccess()).isFalse();
@@ -215,12 +257,12 @@ class WorkspaceInvitationFlowTest {
         when(userService.findByEmailAndStatusWithThrow("other@example.com", UserStatus.REGISTERED))
                 .thenReturn(UserEntity.builder().id(40L).email("other@example.com").build());
         doAnswer(invocation -> {
-            SimpleMailMessage message = invocation.getArgument(0);
-            if ("failed@example.com".equals(message.getTo()[0])) {
+            MimeMessage message = invocation.getArgument(0);
+            if ("failed@example.com".equals(message.getAllRecipients()[0].toString())) {
                 throw new MailSendException("SMTP unavailable");
             }
             return null;
-        }).when(mailSender).send(any(SimpleMailMessage.class));
+        }).when(mailSender).send(any(MimeMessage.class));
 
         var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com", "failed@example.com", "other@example.com")), 1L);
 
@@ -229,7 +271,7 @@ class WorkspaceInvitationFlowTest {
         assertThat(invitations.findAll()).extracting(invitation -> invitation.getId().getUserId())
                 .containsExactlyInAnyOrder(20L, 40L);
         assertThat(members.count()).isZero();
-        var captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mailSender, times(3)).send(captor.capture());
         var messages = captor.getAllValues();
         String firstToken = tokenFrom(messages.get(0));
@@ -245,7 +287,7 @@ class WorkspaceInvitationFlowTest {
         var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com", "MEMBER@EXAMPLE.COM")), 1L);
         assertThat(results).hasSize(1);
         assertThat(results.get(0).isSuccess()).isTrue();
-        var captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mailSender, times(1)).send(captor.capture());
         business.accept(new WorkspaceMemberAcceptRequest(tokenFrom(captor.getValue())), 20L);
         assertThat(members.count()).isEqualTo(1);
@@ -266,7 +308,7 @@ class WorkspaceInvitationFlowTest {
         assertThat(results.get(0).getMessage()).isEqualTo(UserErrorCode.USER_NOT_FOUND.getDescription());
         assertThat(results.get(1).getMessage()).isEqualTo("이미 등록된 워크스페이스 멤버입니다");
         assertThat(invitations.count()).isEqualTo(1);
-        verify(mailSender, times(1)).send(any(SimpleMailMessage.class));
+        verify(mailSender, times(1)).send(any(MimeMessage.class));
     }
 
     @Test
@@ -287,19 +329,50 @@ class WorkspaceInvitationFlowTest {
         var results = business.invite(new WorkspaceMemberInviteRequest(10L, List.of("member@example.com")), 1L);
         assertThat(results).hasSize(1);
         assertThat(results.get(0).isSuccess()).isTrue();
-        var captor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        var captor = ArgumentCaptor.forClass(MimeMessage.class);
         verify(mailSender).send(captor.capture());
         var message = captor.getValue();
-        assertThat(message.getTo()).containsExactly("member@example.com");
-        assertThat(message.getFrom()).isEqualTo("invite@example.com");
-        assertThat(message.getText()).contains("테스트 워크스페이스", "https://frontend.example.com/invitations/accept?token=");
+        try {
+            assertThat(message.getAllRecipients()).extracting(Object::toString).containsExactly("member@example.com");
+            assertThat(message.getFrom()).extracting(Object::toString).containsExactly("invite@example.com");
+        } catch (MessagingException e) {
+            throw new AssertionError(e);
+        }
+        assertThat(mailBody(message, "text/plain")).contains("테스트 워크스페이스", "https://frontend.example.com/invitations/accept?token=");
         return tokenFrom(message);
     }
 
-    private String tokenFrom(SimpleMailMessage message) {
-        var matcher = Pattern.compile("token=([0-9a-f-]{36})").matcher(message.getText());
+    private String tokenFrom(MimeMessage message) {
+        var matcher = Pattern.compile("token=([0-9a-f-]{36})").matcher(mailBody(message, "text/plain"));
         assertThat(matcher.find()).isTrue();
         return matcher.group(1);
+    }
+
+    private String mailBody(MimeMessage message, String mimeType) {
+        try {
+            message.saveChanges();
+            String body = findBody(message, mimeType);
+            assertThat(body).isNotNull();
+            return body;
+        } catch (MessagingException | IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private String findBody(Part part, String mimeType) throws MessagingException, IOException {
+        if (part.isMimeType(mimeType)) {
+            return (String) part.getContent();
+        }
+        if (part.isMimeType("multipart/*")) {
+            var multipart = (Multipart) part.getContent();
+            for (int i = 0; i < multipart.getCount(); i++) {
+                String body = findBody(multipart.getBodyPart(i), mimeType);
+                if (body != null) {
+                    return body;
+                }
+            }
+        }
+        return null;
     }
 
     private void assertInvalidInvitation(String token) {
@@ -331,6 +404,17 @@ class WorkspaceInvitationFlowTest {
         @Bean
         JpaTransactionManager transactionManager(jakarta.persistence.EntityManagerFactory factory) {
             return new JpaTransactionManager(factory);
+        }
+
+        @Bean
+        TemplateEngine templateEngine() {
+            var resolver = new ClassLoaderTemplateResolver();
+            resolver.setPrefix("templates/");
+            resolver.setSuffix(".html");
+            resolver.setCharacterEncoding("UTF-8");
+            var engine = new SpringTemplateEngine();
+            engine.setTemplateResolver(resolver);
+            return engine;
         }
 
         @Bean WorkspaceService workspaceService() { return mock(WorkspaceService.class); }

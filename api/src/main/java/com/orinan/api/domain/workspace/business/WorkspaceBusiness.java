@@ -30,7 +30,8 @@ public class WorkspaceBusiness {
     @Transactional(readOnly = true)
     public WorkspaceResponse getMyWorkspace(Long workspaceId, Long userId){
         var workspace = workspaceService.findByIdWithThrow(workspaceId);
-        if (!workspace.getUser().getId().equals(userId)) {
+        if (!workspace.getUser().getId().equals(userId)
+                && !workspaceMemberService.exists(new WorkspaceMemberId(workspaceId, userId))) {
             throw new ApiException(UserErrorCode.USER_PERMISSION_DENY);
         }
         return workspaceConverter.toResponse(workspace);
@@ -39,6 +40,13 @@ public class WorkspaceBusiness {
     @Transactional(readOnly = true)
     public List<WorkspaceResponse> getMyWorkspaces(Long userId){
         return workspaceService.findAllByUserId(userId).stream()
+                .map(workspaceConverter::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<WorkspaceResponse> getJoinedWorkspaces(Long userId){
+        return workspaceService.findAllJoinedByUserId(userId).stream()
                 .map(workspaceConverter::toResponse)
                 .toList();
     }
