@@ -7,11 +7,17 @@ import com.orinan.db.workspace.WorkspaceRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 public class WorkspaceService {
 
     private final WorkspaceRepository workspaceRepository;
+
+    public List<WorkspaceEntity> findAllByUserId(Long userId){
+        return workspaceRepository.findAllByUserIdOrderByIdDesc(userId);
+    }
 
     public WorkspaceEntity findByIdWithThrow(Long id){
         return workspaceRepository.findById(id)

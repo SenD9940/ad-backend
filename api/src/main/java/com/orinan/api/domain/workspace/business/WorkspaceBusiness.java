@@ -14,6 +14,8 @@ import com.orinan.db.workspacemember.enums.WorkspaceMemberRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Business
 @RequiredArgsConstructor
 public class WorkspaceBusiness {
@@ -22,6 +24,13 @@ public class WorkspaceBusiness {
     private final WorkspaceConverter workspaceConverter;
     private final UserService userService;
     private final WorkspaceMemberService workspaceMemberService;
+
+    @Transactional(readOnly = true)
+    public List<WorkspaceResponse> getMyWorkspaces(Long userId){
+        return workspaceService.findAllByUserId(userId).stream()
+                .map(workspaceConverter::toResponse)
+                .toList();
+    }
 
     @Transactional
     public WorkspaceResponse register(WorkspaceRegisterRequest request, Long userId){

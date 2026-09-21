@@ -81,7 +81,7 @@ public class TokenService {
         tokenEntity.setStatus(TokenStatus.ACTIVE);
         tokenEntity.setRefreshTokenHash(searchHashEncoder.encode(tokenDto.getToken()));
         tokenEntity.setIssuedAt(LocalDateTime.now());
-        tokenEntity.setExpiredAt(tokenDto.getExpiredAt());
+        tokenEntity.setExpiresAt(tokenDto.getExpiredAt());
         return tokenRepository.save(tokenEntity);
     }
 

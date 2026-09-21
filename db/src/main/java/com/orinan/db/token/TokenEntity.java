@@ -34,5 +34,5 @@ public class TokenEntity extends BaseEntity {
 
     private LocalDateTime revokedAt;
 
-    private LocalDateTime expiredAt;
+    private LocalDateTime expiresAt;
 }

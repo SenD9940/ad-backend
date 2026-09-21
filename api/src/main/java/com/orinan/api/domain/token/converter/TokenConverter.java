@@ -29,7 +29,7 @@ public class TokenConverter {
         Objects.requireNonNull(tokenDto, () -> { throw new ApiException(ApiCode.NULL_POINT);});
 
         return TokenEntity.builder()
-                .expiredAt(tokenDto.getExpiredAt())
+                .expiresAt(tokenDto.getExpiredAt())
                 .build();
     }
 
@@ -38,14 +38,14 @@ public class TokenConverter {
 
         return TokenDto.builder()
                 .token(tokenEntity.getRefreshTokenHash())
-                .expiredAt(tokenEntity.getExpiredAt())
+                .expiredAt(tokenEntity.getExpiresAt())
                 .build();
     }
 
     public TokenDto toDto(TokenEntity tokenEntity, String refreshToken) {
         return TokenDto.builder()
                 .token(refreshToken)
-                .expiredAt(tokenEntity.getExpiredAt())
+                .expiredAt(tokenEntity.getExpiresAt())
                 .build();
     }
 }

@@ -1,4 +1,18 @@
 spring:
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:true}
+          starttls:
+            enable: ${MAIL_STARTTLS_ENABLE:true}
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
   config:
     activate:
       on-profile: prod
@@ -22,6 +36,8 @@ spring:
     timeout-per-shutdown-phase: 30s
 
 app:
+  workspace-invitation:
+    accept-url: ${WORKSPACE_INVITATION_ACCEPT_URL:}
   meta:
     app-id: ${META_APP_ID}
     app-secret: ${META_APP_SECRET}
