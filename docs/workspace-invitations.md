@@ -92,7 +92,13 @@ MAIL_STARTTLS_ENABLE=true
 - SMTP 전송 실패 시 초대 저장을 롤백합니다. 재발송 실패 시 기존 링크는 유지됩니다.
 - SMTP와 DB는 분산 트랜잭션이 아니므로 메일 발송 후 DB 커밋이 실패한 경우에는 재초대가 필요합니다.
 
-## 검증
+### 멤버 목록
+
+`GET /api/workspace-members/{workspaceId}`
+
+로그인한 소유자 또는 해당 워크스페이스의 현재 멤버가 조회할 수 있습니다. 응답은 `Api<List<WorkspaceMemberResponse>>`이며 각 항목은 `workspace_id`, `user_id`, `role`, `registered_at`, `updated_at`을 포함합니다. 등록일 오름차순이며 등록일이 같으면 사용자 ID순입니다. 소유자의 멤버 등록도 포함하고, 초대 대기 중인 사용자와 추방된 사용자는 제외합니다. 소유자도 현재 멤버도 아니면 HTTP 403을 반환합니다.
+
+## 테스트
 
 ```sh
 ./gradlew :api:test --tests com.orinan.api.domain.workspacemember.WorkspaceInvitationFlowTest --offline

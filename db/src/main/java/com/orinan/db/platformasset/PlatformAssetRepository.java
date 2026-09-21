@@ -1,9 +1,16 @@
 package com.orinan.db.platformasset;
 
-import com.orinan.db.platformconnection.PlatformConnectionEntity;
-import com.orinan.db.platformconnection.PlatformConnectionRepository;
+import com.orinan.db.platformasset.enums.AssetType;
+import com.orinan.db.platformasset.enums.PlatformType;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
-public interface PlatformAssetRepository extends JpaRepository<PlatformConnectionEntity, Long>{
+import java.util.List;
+import java.util.Optional;
+
+public interface PlatformAssetRepository extends JpaRepository<PlatformAssetEntity, Long> {
+
+    List<PlatformAssetEntity> findAllByConnectionIdOrderByIdAsc(Long connectionId);
+
+    Optional<PlatformAssetEntity> findByConnectionIdAndPlatformTypeAndAssetTypeAndExternalId(
+            Long connectionId, PlatformType platformType, AssetType assetType, String externalId);
 }

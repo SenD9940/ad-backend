@@ -1,6 +1,7 @@
 package com.orinan.api.domain.workspacemember;
 
 import com.orinan.api.common.exception.ApiException;
+import com.orinan.api.common.code.ApiCode;
 import com.orinan.api.common.time.SeoulDateTimes;
 import com.orinan.api.domain.user.service.UserService;
 import com.orinan.api.domain.user.exception.UserErrorCode;
@@ -9,6 +10,7 @@ import com.orinan.api.domain.workspacemember.business.WorkspaceMemberBusiness;
 import com.orinan.api.domain.workspacemember.controller.model.WorkspaceMemberAcceptRequest;
 import com.orinan.api.domain.workspacemember.controller.model.WorkspaceMemberInviteRequest;
 import com.orinan.api.domain.workspacemember.controller.model.WorkspaceMemberKickRequest;
+import com.orinan.api.domain.workspacemember.controller.model.WorkspaceMemberResponse;
 import com.orinan.api.domain.workspacemember.converter.WorkspaceMemberConverter;
 import com.orinan.api.domain.workspacemember.service.WorkspaceInvitationService;
 import com.orinan.api.domain.workspacemember.service.WorkspaceMemberService;
@@ -110,6 +112,49 @@ class WorkspaceInvitationFlowTest {
                 .digest(token.getBytes(StandardCharsets.UTF_8)));
         assertThat(invitation.getTokenHash()).isEqualTo(hash).isNotEqualTo(token);
         assertThat(invitation.getExpiresAt()).isAfter(SeoulDateTimes.now().plusHours(23));
+    }
+
+    @Test
+    void memberListIncludesOnlyAcceptedMembersOfRequestedWorkspace() {
+        members.saveAndFlush(WorkspaceMemberEntity.builder().id(new WorkspaceMemberId(10L, 1L))
+                .role(WorkspaceMemberRole.MEMBER).build());
+        members.saveAndFlush(WorkspaceMemberEntity.builder().id(new WorkspaceMemberId(11L, 30L))
+                .role(WorkspaceMemberRole.MEMBER).build());
+        String token = inviteAndGetToken();
+
+        assertThat(business.getMembers(10L, 1L)).extracting(WorkspaceMemberResponse::getUserId)
+                .containsExactly(1L);
+        business.accept(new WorkspaceMemberAcceptRequest(token), 20L);
+        assertThat(business.getMembers(10L, 1L)).extracting(WorkspaceMemberResponse::getUserId)
+                .containsExactly(1L, 20L);
+        assertThat(business.getMembers(10L, 20L)).extracting(WorkspaceMemberResponse::getUserId)
+                .containsExactly(1L, 20L);
+
+        business.kick(new WorkspaceMemberKickRequest(10L, 20L), 1L);
+        assertThat(business.getMembers(10L, 1L)).extracting(WorkspaceMemberResponse::getUserId)
+                .containsExactly(1L);
+        assertThatThrownBy(() -> business.getMembers(10L, 20L))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.getCodeIfs()).isEqualTo(UserErrorCode.USER_PERMISSION_DENY));
+    }
+
+    @Test
+    void memberOfAnotherWorkspaceCannotReadMemberList() {
+        members.saveAndFlush(WorkspaceMemberEntity.builder().id(new WorkspaceMemberId(11L, 30L))
+                .role(WorkspaceMemberRole.MEMBER).build());
+
+        assertThatThrownBy(() -> business.getMembers(10L, 30L))
+                .isInstanceOfSatisfying(ApiException.class, e ->
+                        assertThat(e.getCodeIfs()).isEqualTo(UserErrorCode.USER_PERMISSION_DENY));
+    }
+
+    @Test
+    void missingWorkspaceCannotReturnMemberList() {
+        when(workspaceService.findByIdWithThrow(99L))
+                .thenThrow(new ApiException(ApiCode.BAD_REQUEST, "존재하지 않는 워크스페이스입니다"));
+
+        assertThatThrownBy(() -> business.getMembers(99L, 1L))
+                .isInstanceOf(ApiException.class).hasMessage("존재하지 않는 워크스페이스입니다");
     }
 
     @Test

@@ -16,7 +16,10 @@ import java.time.LocalDateTime;
 
 @Data
 @Entity
-@Table(name = "platform_assets")
+@Table(name = "platform_assets", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_platform_assets_connection_platform_type_external",
+                columnNames = {"connection_id", "platform_type", "asset_type", "external_id"})
+})
 @EqualsAndHashCode(callSuper = true)
 @NoArgsConstructor
 @AllArgsConstructor
@@ -26,16 +29,19 @@ public class PlatformAssetEntity extends BaseEntity {
     @Column(nullable = false)
     private Long workspaceId;
 
+    // 연결 삭제 시 외래 키의 SET NULL 동작으로 자산 기록을 보존합니다.
+    @Column(nullable = true)
     private Long connectionId;
 
-    @JoinColumn(name = "platform_type")
+    @Column(name = "platform_type", length = 30, nullable = false)
     @Enumerated(EnumType.STRING)
     private PlatformType platformType;
 
-    @JoinColumn(name = "asset_type")
+    @Column(name = "asset_type", length = 30, nullable = false)
     @Enumerated(EnumType.STRING)
     private AssetType assetType;
 
+    @Column(nullable = false)
     private String externalId;
 
     private String name;

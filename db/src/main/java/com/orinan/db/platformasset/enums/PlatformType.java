@@ -11,7 +11,9 @@ public enum PlatformType {
     INSTAGRAM("인스타"),
     THREADS("쓰레드"),
     GOOGLE_ADS("구글"),
-    NAVER_ADS("네이버")
+    NAVER_ADS("네이버"),
+    NAVER_SMART_STORE("네이버 스마트스토어"),
+    COUPANG("쿠팡")
     ;
 
     private final String description;

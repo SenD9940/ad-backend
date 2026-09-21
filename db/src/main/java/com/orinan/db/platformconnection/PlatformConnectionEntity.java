@@ -10,13 +10,17 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import lombok.experimental.SuperBuilder;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
-import java.sql.Blob;
 import java.time.LocalDateTime;
 
 @Data
 @Entity
-@Table(name = "platform_connections")
+@Table(name = "platform_connections", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_platform_connections_workspace_provider_account",
+                columnNames = {"workspace_id", "provider_type", "external_account_id"})
+})
 @EqualsAndHashCode(callSuper = true)
 @NoArgsConstructor
 @AllArgsConstructor
@@ -37,19 +41,13 @@ public class PlatformConnectionEntity extends BaseEntity {
     @Column(length = 255)
     private String accountName;
 
-    @Column(columnDefinition = "TEXT", nullable = false)
-    private String accessToken;
-
-    @Column(columnDefinition = "TEXT")
-    private String refreshToken;
-
-    private LocalDateTime expiresAt;
-
     @Column(nullable = false)
     private Boolean requiresReauth;
 
+    @CreationTimestamp
     private LocalDateTime registeredAt;
 
+    @UpdateTimestamp
     private LocalDateTime updatedAt;
 
 }

@@ -39,6 +39,8 @@ app:
   workspace-invitation:
     accept-url: ${WORKSPACE_INVITATION_ACCEPT_URL:}
   meta:
+    api-version: ${META_API_VERSION:v26.0}
+    frontend-redirect-uri: ${META_FRONTEND_REDIRECT_URI:}
     app-id: ${META_APP_ID}
     app-secret: ${META_APP_SECRET}
     redirect-uri: ${META_REDIRECT_URI}
