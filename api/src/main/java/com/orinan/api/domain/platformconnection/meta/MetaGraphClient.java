@@ -15,17 +15,21 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -42,10 +46,12 @@ public class MetaGraphClient {
 
     private final WebClient webClient;
     private final MetaProperties properties;
+    private final JsonMapper jsonMapper;
 
-    public MetaGraphClient(WebClient.Builder builder, MetaProperties properties) {
+    public MetaGraphClient(WebClient.Builder builder, MetaProperties properties, JsonMapper jsonMapper) {
         this.webClient = builder.clone().build();
         this.properties = properties;
+        this.jsonMapper = jsonMapper;
     }
 
     public String authorizationUrl(String state) {
@@ -130,6 +136,131 @@ public class MetaGraphClient {
         return List.copyOf(assets);
     }
 
+    public AdAccount getAdAccount(String adAccountId, String accessToken) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        JsonNode account = get(adAccountId, "id,name,currency,timezone_name", accessToken, null);
+        String id = requiredText(account, "id");
+        String currency = requiredText(account, "currency");
+        if (!adAccountId.equals(id) || !currency.matches("[A-Z]{3}")) {
+            throw invalidResponse();
+        }
+        return new AdAccount(id, requiredText(account, "name"), currency, requiredText(account, "timezone_name"));
+    }
+
+    public List<Campaign> listCampaigns(String adAccountId, String accessToken) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        List<Campaign> campaigns = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
+        for (JsonNode campaign : readEdge(adAccountId + "/campaigns",
+                "id,account_id,name,status,effective_status,objective", accessToken)) {
+            requireAccountId(campaign, adAccountId);
+            String id = requiredText(campaign, "id");
+            if (!ids.add(id)) {
+                throw invalidResponse();
+            }
+            campaigns.add(new Campaign(id, requiredText(campaign, "name"), requiredText(campaign, "status"),
+                    requiredText(campaign, "effective_status"), requiredText(campaign, "objective")));
+        }
+        return List.copyOf(campaigns);
+    }
+
+    public List<Insights> getCampaignInsights(String adAccountId, String accessToken, LocalDate since, LocalDate until) {
+        return readInsights(adAccountId, accessToken, since, until, true);
+    }
+
+    public List<Insights> getAccountInsights(String adAccountId, String accessToken, LocalDate since, LocalDate until) {
+        return readInsights(adAccountId, accessToken, since, until, false);
+    }
+
+    private List<Insights> readInsights(String adAccountId, String accessToken, LocalDate since,
+                                       LocalDate until, boolean campaignLevel) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        if (since == null || until == null || since.isAfter(until)) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "성과 조회 기간을 확인해 주세요.");
+        }
+        String fields = campaignLevel ? "account_id,campaign_id,campaign_name,spend,impressions,clicks,action_values"
+                : "account_id,spend,impressions,clicks,action_values";
+        Map<String, String> parameters = Map.of("level", campaignLevel ? "campaign" : "account",
+                "time_range", jsonMapper.writeValueAsString(Map.of("since", since.toString(), "until", until.toString())));
+        List<Insights> insights = new ArrayList<>();
+        Set<String> campaignIds = new HashSet<>();
+        for (JsonNode row : readEdge(adAccountId + "/insights", fields, accessToken, parameters)) {
+            requireAccountId(row, adAccountId);
+            String campaignId = campaignLevel ? requiredText(row, "campaign_id") : null;
+            if (campaignLevel ? !campaignIds.add(campaignId) : !insights.isEmpty()) {
+                // No time increment or breakdowns: each entity must have one row for the entire period.
+                throw invalidResponse();
+            }
+            insights.add(new Insights(campaignId, campaignLevel ? requiredText(row, "campaign_name") : null,
+                    nonNegativeDecimal(row, "spend"), nonNegativeLong(row, "impressions"), nonNegativeLong(row, "clicks"),
+                    purchaseValue(row)));
+        }
+        return List.copyOf(insights);
+    }
+
+    private BigDecimal purchaseValue(JsonNode row) {
+        JsonNode values = row.path("action_values");
+        if (values.isMissingNode() || values.isNull()) {
+            return BigDecimal.ZERO;
+        }
+        if (!values.isArray()) {
+            throw invalidResponse();
+        }
+        BigDecimal omniPurchase = null;
+        BigDecimal purchase = null;
+        for (JsonNode action : values) {
+            String type = requiredText(action, "action_type");
+            if ("omni_purchase".equals(type)) {
+                if (omniPurchase != null) {
+                    throw invalidResponse();
+                }
+                omniPurchase = nonNegativeDecimal(action, "value");
+            } else if ("purchase".equals(type)) {
+                if (purchase != null) {
+                    throw invalidResponse();
+                }
+                purchase = nonNegativeDecimal(action, "value");
+            }
+        }
+        // Use a single aggregate. Pixel/app purchase entries may overlap with these totals.
+        return omniPurchase != null ? omniPurchase : purchase != null ? purchase : BigDecimal.ZERO;
+    }
+
+    private void validateAdAccountRequest(String adAccountId, String accessToken) {
+        properties.validate();
+        if (adAccountId == null || !adAccountId.matches("act_[0-9]{1,32}") || !StringUtils.hasText(accessToken)) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "Meta 광고 계정의 연결 상태를 확인해 주세요.");
+        }
+    }
+
+    private void requireAccountId(JsonNode node, String adAccountId) {
+        if (!adAccountId.substring(4).equals(requiredText(node, "account_id"))) {
+            throw invalidResponse();
+        }
+    }
+
+    private BigDecimal nonNegativeDecimal(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        String text = value.isString() ? value.asString() : value.isNumber() ? value.toString() : "";
+        if (text.length() > 64 || !text.matches("[0-9]+(?:\\.[0-9]+)?")) {
+            throw invalidResponse();
+        }
+        return new BigDecimal(text);
+    }
+
+    private long nonNegativeLong(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        String text = value.isString() ? value.asString() : value.isIntegralNumber() ? value.toString() : "";
+        if (text.length() > 19 || !text.matches("[0-9]+")) {
+            throw invalidResponse();
+        }
+        try {
+            return Long.parseLong(text);
+        } catch (NumberFormatException exception) {
+            throw invalidResponse();
+        }
+    }
+
     private MultiValueMap<String, String> credentials() {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("client_id", properties.getAppId());
@@ -145,6 +276,10 @@ public class MetaGraphClient {
     }
 
     private List<JsonNode> readEdge(String path, String fields, String accessToken) {
+        return readEdge(path, fields, accessToken, Map.of());
+    }
+
+    private List<JsonNode> readEdge(String path, String fields, String accessToken, Map<String, String> parameters) {
         List<JsonNode> entries = new ArrayList<>();
         Set<String> cursors = new HashSet<>();
         String after = null;
@@ -153,7 +288,7 @@ public class MetaGraphClient {
             if (System.nanoTime() > deadline) {
                 throw new ApiException(ApiCode.SERVER_ERROR, "Meta 목록 조회 시간이 초과되었습니다. 다시 시도해 주세요.");
             }
-            JsonNode response = get(path, fields, accessToken, after);
+            JsonNode response = get(path, fields, accessToken, after, parameters);
             JsonNode data = response.path("data");
             if (!data.isArray()) {
                 throw invalidResponse();
@@ -165,8 +300,15 @@ public class MetaGraphClient {
                 entries.add(item);
             }
             JsonNode paging = response.path("paging");
-            if (!StringUtils.hasText(optionalText(paging, "next", null))) {
+            if (!paging.isMissingNode() && !paging.isNull() && !paging.isObject()) {
+                throw invalidResponse();
+            }
+            JsonNode next = paging.path("next");
+            if (next.isMissingNode() || next.isNull()) {
                 return entries;
+            }
+            if (!next.isString() || !StringUtils.hasText(next.asString())) {
+                throw invalidResponse();
             }
             // Never request paging.next: it can contain a token or a different host.
             after = requiredText(paging.path("cursors"), "after");
@@ -174,11 +316,15 @@ public class MetaGraphClient {
                 throw invalidResponse();
             }
         }
-        throw new ApiException(ApiCode.BAD_REQUEST, "Meta 자산 목록이 조회 한도를 초과했습니다.");
+        throw new ApiException(ApiCode.BAD_REQUEST, "Meta 목록이 조회 한도를 초과했습니다. 조회 범위를 줄여 주세요.");
     }
 
     private JsonNode get(String path, String fields, String accessToken, String after) {
-        URI uri = UriComponentsBuilder.fromUri(graphUri(path, fields, after))
+        return get(path, fields, accessToken, after, Map.of());
+    }
+
+    private JsonNode get(String path, String fields, String accessToken, String after, Map<String, String> parameters) {
+        URI uri = UriComponentsBuilder.fromUri(graphUri(path, fields, after, parameters))
                 .queryParam("appsecret_proof", appSecretProof(accessToken)).build(true).toUri();
         return readResponse(webClient.get().uri(uri)
                 .headers(headers -> headers.setBearerAuth(accessToken)));
@@ -195,30 +341,39 @@ public class MetaGraphClient {
     }
 
     private URI graphUri(String path, String fields, String after) {
+        return graphUri(path, fields, after, Map.of());
+    }
+
+    private URI graphUri(String path, String fields, String after, Map<String, String> parameters) {
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(GRAPH_URL)
                 .pathSegment(properties.getApiVersion()).path("/" + path);
+        Map<String, String> variables = new LinkedHashMap<>(parameters);
         if (fields != null) {
             builder.queryParam("fields", "{fields}");
+            variables.put("fields", fields);
         }
-        if (path.startsWith("me/")) {
+        if (path.startsWith("me/") || path.endsWith("/campaigns") || path.endsWith("/insights")) {
             builder.queryParam("limit", 100);
         }
         if (after != null) {
             builder.queryParam("after", "{after}");
+            variables.put("after", after);
         }
-        return builder.encode().buildAndExpand(Map.of("fields", fields == null ? "" : fields,
-                "after", after == null ? "" : after)).toUri();
+        parameters.forEach((key, value) -> builder.queryParam(key, "{" + key + "}"));
+        return builder.encode().buildAndExpand(variables).toUri();
     }
 
     private JsonNode readResponse(WebClient.RequestHeadersSpec<?> request) {
         try {
             JsonNode response = request.exchangeToMono(result -> {
                 if (!result.statusCode().is2xxSuccessful()) {
-                    ApiCode code = result.statusCode().is4xxClientError() ? ApiCode.BAD_REQUEST : ApiCode.SERVER_ERROR;
+                    ApiCode code = result.statusCode().is4xxClientError() && result.statusCode().value() != 429
+                            ? ApiCode.BAD_REQUEST : ApiCode.SERVER_ERROR;
                     return result.releaseBody().then(Mono.error(new ApiException(code,
                             "Meta 요청을 처리하지 못했습니다. 계정 권한과 연결 상태를 확인해 주세요.")));
                 }
-                return result.bodyToMono(JsonNode.class);
+                // JsonNode decoding logs response values at DEBUG, including OAuth access tokens.
+                return result.bodyToMono(byte[].class).map(jsonMapper::readTree);
             }).block(REQUEST_TIMEOUT);
             if (response == null || !response.isObject() || response.has("error")) {
                 throw invalidResponse();
@@ -259,5 +414,15 @@ public class MetaGraphClient {
 
     public record DiscoveredAsset(String externalId, String name, PlatformType platformType,
                                   AssetType assetType, String facebookPageId) {
+    }
+
+    public record Campaign(String id, String name, String status, String effectiveStatus, String objective) {
+    }
+
+    public record AdAccount(String id, String name, String currency, String timezoneName) {
+    }
+
+    public record Insights(String campaignId, String campaignName, BigDecimal spend, long impressions, long clicks,
+                           BigDecimal purchaseValue) {
     }
 }

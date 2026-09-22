@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -28,7 +29,8 @@ public class ValidExceptionHandler {
     }
 
 
-    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class, MissingServletRequestPartException.class})
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
+            MissingServletRequestPartException.class, MissingServletRequestParameterException.class})
     public ResponseEntity<Api<Object>> invalidFormat(Exception exception) {
         return ResponseEntity.badRequest().body(Api.ERROR(ApiCode.BAD_REQUEST, "요청 형식을 확인해 주세요."));
     }

@@ -9,6 +9,8 @@ import java.util.Optional;
 
 public interface PlatformAssetRepository extends JpaRepository<PlatformAssetEntity, Long> {
 
+    Optional<PlatformAssetEntity> findByIdAndWorkspaceId(Long id, Long workspaceId);
+
     List<PlatformAssetEntity> findAllByConnectionIdOrderByIdAsc(Long connectionId);
 
     Optional<PlatformAssetEntity> findByConnectionIdAndPlatformTypeAndAssetTypeAndExternalId(

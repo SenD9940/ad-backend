@@ -16,6 +16,7 @@ import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
 import java.net.URLDecoder;
@@ -46,7 +47,7 @@ class MetaGraphClientTest {
         client = new MetaGraphClient(WebClient.builder().exchangeFunction(request -> {
             requests.add(request);
             return Mono.just(responses.remove());
-        }), properties);
+        }), properties, JsonMapper.builder().build());
     }
 
     @Test
@@ -181,7 +182,7 @@ class MetaGraphClientTest {
     @Test
     void configurationIsCheckedOnlyWhenUsedAndRejectsUnsafeRedirects() {
         MetaProperties empty = new MetaProperties();
-        new MetaGraphClient(WebClient.builder(), empty);
+        new MetaGraphClient(WebClient.builder(), empty, JsonMapper.builder().build());
         assertThatThrownBy(empty::validate).isInstanceOf(ApiException.class);
         properties.setFrontendRedirectUri("javascript:alert(1)");
         assertThatThrownBy(() -> client.authorizationUrl("state")).isInstanceOf(ApiException.class);
