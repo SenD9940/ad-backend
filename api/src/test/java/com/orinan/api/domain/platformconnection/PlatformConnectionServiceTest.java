@@ -14,6 +14,8 @@ import com.orinan.db.metaasset.MetaAssetEntity;
 import com.orinan.db.metaasset.MetaAssetRepository;
 import com.orinan.db.metaconnection.MetaConnectionEntity;
 import com.orinan.db.metaconnection.MetaConnectionRepository;
+import com.orinan.db.naverconnection.NaverConnectionEntity;
+import com.orinan.db.naverconnection.NaverConnectionRepository;
 import com.orinan.db.platformasset.PlatformAssetEntity;
 import com.orinan.db.platformasset.PlatformAssetRepository;
 import com.orinan.db.platformasset.enums.AssetType;
@@ -47,10 +49,29 @@ class PlatformConnectionServiceTest {
     private final WorkspaceMemberService members = mock(WorkspaceMemberService.class);
     private final UserService users = mock(UserService.class);
     private final EntityManager entityManager = mock(EntityManager.class);
+    private final NaverConnectionRepository naverConnections = mock(NaverConnectionRepository.class);
     private final PlatformConnectionService service = new PlatformConnectionService(
-            connections, metaConnections, assets, metaAssets, workspaceService, workspaces, members, users, entityManager);
+            connections, metaConnections, assets, metaAssets, workspaceService, workspaces, members, users, entityManager, naverConnections);
     private final WorkspaceEntity workspace = WorkspaceEntity.builder().id(10L).name("광고 워크스페이스")
             .user(UserEntity.builder().id(1L).build()).build();
+
+    @Test
+    void naverListingShowsRenewableExpiryAndFlagsMissingCredentials() {
+        var connection = connection();
+        connection.setProviderType(ProviderType.NAVER);
+        var expiredAt = SeoulDateTimes.now().minusMinutes(1);
+        when(workspaceService.findByIdWithThrow(10L)).thenReturn(workspace);
+        when(members.exists(new WorkspaceMemberId(10L, 2L))).thenReturn(true);
+        when(connections.findAllByWorkspaceIdOrderByIdDesc(10L)).thenReturn(List.of(connection));
+        when(naverConnections.findById(20L)).thenReturn(
+                Optional.of(NaverConnectionEntity.builder().expiresAt(expiredAt).build()), Optional.empty());
+
+        var response = service.findAll(10L, 2L).get(0);
+        assertThat(response.expiresAt()).isEqualTo(expiredAt);
+        assertThat(response.requiresReauth()).isFalse();
+        assertThat(service.findAll(10L, 2L).get(0).requiresReauth()).isTrue();
+        verifyNoInteractions(metaConnections);
+    }
 
     @Test
     void membersCannotStartAuthorizationOrReplaceWorkspaceCredentials() {

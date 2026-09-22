@@ -9,7 +9,8 @@ public enum AssetType {
 
     AD_ACCOUNT("광고 계정"),
     PAGE("광고 페이지"),
-    PROFILE("프로필")
+    PROFILE("프로필"),
+    STORE("스토어")
 
     ;
 

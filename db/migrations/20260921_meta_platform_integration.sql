@@ -71,7 +71,7 @@ DEALLOCATE PREPARE meta_legacy_credentials_stmt;
 -- 연결이 삭제된 자산 기록을 보존하며, 연결 선택 API는 유효한 connection_id를 항상 지정합니다.
 ALTER TABLE platform_assets
     MODIFY COLUMN platform_type ENUM('FACEBOOK', 'INSTAGRAM', 'THREADS', 'GOOGLE_ADS', 'NAVER_ADS', 'NAVER_SMART_STORE', 'COUPANG') NOT NULL,
-    MODIFY COLUMN asset_type ENUM('AD_ACCOUNT', 'PAGE', 'PROFILE') NOT NULL,
+    MODIFY COLUMN asset_type ENUM('AD_ACCOUNT', 'PAGE', 'PROFILE', 'STORE') NOT NULL,
     MODIFY COLUMN external_id VARCHAR(255) NOT NULL;
 
 SET @meta_connection_unique_sql = IF(

@@ -15,6 +15,7 @@ import com.orinan.db.metaasset.MetaAssetEntity;
 import com.orinan.db.metaasset.MetaAssetRepository;
 import com.orinan.db.metaconnection.MetaConnectionEntity;
 import com.orinan.db.metaconnection.MetaConnectionRepository;
+import com.orinan.db.naverconnection.NaverConnectionRepository;
 import com.orinan.db.platformasset.PlatformAssetEntity;
 import com.orinan.db.platformasset.PlatformAssetRepository;
 import com.orinan.db.platformconnection.PlatformConnectionEntity;
@@ -44,6 +45,7 @@ public class PlatformConnectionService {
     private final WorkspaceMemberService members;
     private final UserService users;
     private final EntityManager entityManager;
+    private final NaverConnectionRepository naverConnections;
 
     @Transactional(readOnly = true)
     public void requireOwner(Long workspaceId, Long userId) {
@@ -60,6 +62,13 @@ public class PlatformConnectionService {
         requireMember(workspaceId, userId);
         return connections.findAllByWorkspaceIdOrderByIdDesc(workspaceId).stream()
                 .map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public PlatformConnectionResponse findById(Long workspaceId, Long connectionId, Long userId) {
+        requireMember(workspaceId, userId);
+        return connections.findByIdAndWorkspaceId(connectionId, workspaceId).map(this::toResponse)
+                .orElseThrow(() -> new ApiException(ApiCode.BAD_REQUEST, "존재하지 않는 플랫폼 연결입니다."));
     }
 
     @Transactional
@@ -159,11 +168,16 @@ public class PlatformConnectionService {
     private PlatformConnectionResponse toResponse(PlatformConnectionEntity connection) {
         var meta = connection.getProviderType() == ProviderType.META
                 ? metaConnections.findById(connection.getId()).orElse(null) : null;
+        var naver = connection.getProviderType() == ProviderType.NAVER
+                ? naverConnections.findById(connection.getId()).orElse(null) : null;
         boolean requiresReauth = Boolean.TRUE.equals(connection.getRequiresReauth())
-                || (connection.getProviderType() == ProviderType.META && (meta == null || expired(meta)));
+                || (connection.getProviderType() == ProviderType.META && (meta == null || expired(meta)))
+                || (connection.getProviderType() == ProviderType.NAVER && naver == null);
+        // Naver client credentials can renew an expired token without another user login.
+        var expiresAt = meta != null ? meta.getExpiresAt() : naver != null ? naver.getExpiresAt() : null;
         return new PlatformConnectionResponse(connection.getId(), connection.getWorkspace().getId(),
                 connection.getProviderType(), connection.getExternalAccountId(), connection.getAccountName(),
-                requiresReauth, meta == null ? null : meta.getExpiresAt(), savedAssets(connection.getId()));
+                requiresReauth, expiresAt, savedAssets(connection.getId()));
     }
 
     private List<PlatformAssetResponse> savedAssets(Long connectionId) {

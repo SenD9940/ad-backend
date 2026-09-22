@@ -19,6 +19,7 @@ import com.orinan.db.metaasset.MetaAssetEntity;
 import com.orinan.db.metaasset.MetaAssetRepository;
 import com.orinan.db.metaconnection.MetaConnectionEntity;
 import com.orinan.db.metaconnection.MetaConnectionRepository;
+import com.orinan.db.naverconnection.NaverConnectionRepository;
 import com.orinan.db.platformasset.PlatformAssetEntity;
 import com.orinan.db.platformasset.PlatformAssetRepository;
 import com.orinan.db.platformasset.enums.AssetType;
@@ -92,7 +93,7 @@ class MetaConnectionPersistenceTest {
                 .grantedScopes("ads_read").build());
         var service = new PlatformConnectionService(connections, metaConnections, assets, metaAssets,
                 new WorkspaceService(workspaces), workspaces, new WorkspaceMemberService(members),
-                new UserService(users, mock(PasswordEncoder.class)), entityManager);
+                new UserService(users, mock(PasswordEncoder.class)), entityManager, mock(NaverConnectionRepository.class));
         var client = mock(MetaGraphClient.class);
         var business = new PlatformConnectionBusiness(service, client,
                 mock(MetaOAuthStateService.class), mock(MetaProperties.class));

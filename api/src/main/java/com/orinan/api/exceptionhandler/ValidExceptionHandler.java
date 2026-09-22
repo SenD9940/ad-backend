@@ -35,7 +35,9 @@ public class ValidExceptionHandler {
 
     @ExceptionHandler(value = MethodArgumentNotValidException.class)
     public ResponseEntity<Api<Object>> exception(MethodArgumentNotValidException exception){
-        log.error("valid exception: ", exception);
+        // Binding exceptions include rejected values, which may contain passwords or API secrets.
+        log.warn("validation failed fields: {}", exception.getBindingResult().getFieldErrors()
+                .stream().map(FieldError::getField).distinct().toList());
 
         List<String> errorMessages = exception.getBindingResult().getFieldErrors()
                 .stream()
