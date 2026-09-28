@@ -12,6 +12,10 @@ spring:
     redis:
       repositories:
         enabled: false
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 11MB
 
 server:
   port: ${SERVER_PORT:8481}
@@ -21,9 +25,25 @@ server:
     include-stacktrace: never
 
 app:
+  ai-studio:
+    openai:
+      api-key: ${app.ai-creative.api-key:${OPEN_API_KEY:${OPENAI_API_KEY:}}}
+      text-model: ${OPENAI_TEXT_MODEL:gpt-4o-mini}
+  aws:
+    s3:
+      bucket: ${S3_BUCKET_NAME:}
+      key-prefix: ${S3_KEY_PREFIX:auto-threads}
   admin:
     allowed-origins: ${ADMIN_ALLOWED_ORIGINS:}
     access-token-minutes: ${ADMIN_ACCESS_TOKEN_MINUTES:30}
+
+cloud:
+  aws:
+    region:
+      static: ${AWS_REGION:ap-northeast-2}
+    credentials:
+      access-key: ${AWS_IAM_ACCESS_KEY:}
+      secret-key: ${AWS_IAM_SECRET_KEY:}
 
 springdoc:
   swagger-ui:

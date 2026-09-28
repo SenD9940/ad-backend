@@ -45,7 +45,7 @@ app:
     app-secret: ${META_APP_SECRET}
     redirect-uri: ${META_REDIRECT_URI}
   ai-creative:
-    api-key: ${OPENAI_API_KEY}
+    api-key: ${OPEN_API_KEY:${OPENAI_API_KEY:}}
     model: ${OPENAI_API_MODEL}
     quality: ${OPENAI_IMAGE_QULITY}
     max-pending-per-user: ${OPENAI_MAX_PENDING_PER_USER}

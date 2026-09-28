@@ -4,6 +4,8 @@ import com.orinan.api.annotation.Business;
 import com.orinan.api.common.code.ApiCode;
 import com.orinan.api.common.exception.ApiException;
 import com.orinan.api.common.time.SeoulDateTimes;
+import com.orinan.api.domain.aistudio.service.AiStudioService;
+import com.orinan.api.domain.aistudio.service.AiStudioExport;
 import com.orinan.api.domain.navercommerce.client.NaverProductCreationClient;
 import com.orinan.api.domain.navercommerce.controller.model.NaverProductCreateRequest;
 import com.orinan.api.domain.navercommerce.controller.model.NaverProductCreationResponse.*;
@@ -14,6 +16,7 @@ import com.orinan.api.domain.navercommerce.service.NaverStoreAccessService;
 import com.orinan.api.domain.platformconnection.naver.NaverCommerceClient;
 import com.orinan.api.domain.platformconnection.service.NaverConnectionService;
 import com.orinan.api.domain.platformconnection.service.NaverConnectionService.Credentials;
+import com.orinan.db.aistudio.enums.AiStudioKind;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.util.HtmlUtils;
 
@@ -31,6 +34,7 @@ public class NaverProductCreationBusiness {
     private final NaverProductCreationClient client;
     private final NaverProductImageValidator images;
     private final NaverProductNoticeSchema notices;
+    private final AiStudioService studio;
     // Image calls for one seller must never overlap. App stripes also bound memory.
     private final ReentrantLock[] writes = new ReentrantLock[64];
     private static final List<DeliveryCompany> COURIERS = List.of(
@@ -44,9 +48,10 @@ public class NaverProductCreationBusiness {
 
     public NaverProductCreationBusiness(NaverStoreAccessService access, NaverConnectionService connections,
             NaverCommerceClient commerce, NaverProductCreationClient client,
-            NaverProductImageValidator images, NaverProductNoticeSchema notices) {
+            NaverProductImageValidator images, NaverProductNoticeSchema notices, AiStudioService studio) {
         this.access = access; this.connections = connections; this.commerce = commerce;
         this.client = client; this.images = images; this.notices = notices;
+        this.studio = studio;
         for (int i = 0; i < writes.length; i++) writes[i] = new ReentrantLock(true);
     }
 
@@ -71,6 +76,7 @@ public class NaverProductCreationBusiness {
         var validatedImages = images.validate(files);
         validateLocal(request);
         Map<String, Object> notice = notices.payload(request.noticeType(), request.noticeFields());
+        var studioDetail = studioDetail(workspaceId, userId, request.studioOutputId());
         var context = read(workspaceId, assetId, userId, current -> {
             validateRemote(current, request);
             return current;
@@ -83,7 +89,15 @@ public class NaverProductCreationBusiness {
             unchanged(workspaceId, userId, context);
             var uploaded = client.uploadImages(context.credentials().accessToken(), validatedImages);
             unchanged(workspaceId, userId, context);
-            var result = client.create(context.credentials().accessToken(), payload(request, uploaded, notice));
+            String detailHtml = null;
+            if (studioDetail != null) {
+                var detailImage = new NaverProductImageValidator.ImageData(studioDetail.imageBytes(),
+                        studioDetail.imageContentType(), "studio-detail" + ("image/png".equals(studioDetail.imageContentType()) ? ".png" : ".jpg"));
+                var detailUrls = client.uploadImages(context.credentials().accessToken(), List.of(detailImage));
+                unchanged(workspaceId, userId, context);
+                detailHtml = studioDetail.detailHtml().replace("{{STUDIO_IMAGE}}", HtmlUtils.htmlEscape(detailUrls.get(0)));
+            }
+            var result = client.create(context.credentials().accessToken(), payload(request, uploaded, notice, detailHtml));
             try { unchanged(workspaceId, userId, context); }
             catch (ApiException changed) { return unknown(); }
             return result;
@@ -98,6 +112,8 @@ public class NaverProductCreationBusiness {
     }
 
     private void validateLocal(NaverProductCreateRequest request) {
+        if (request.studioOutputId() == null && blank(request.detailContent())) throw bad("상세 설명을 입력해 주세요.");
+        if (request.studioOutputId() != null && request.studioOutputId() <= 0) throw bad("AI 상세페이지를 다시 선택해 주세요.");
         if (request.deliveryFeeType() == NaverProductCreateRequest.DeliveryFeeType.FREE && request.deliveryFee() != 0)
             throw bad("무료 배송의 배송비는 0원으로 입력해 주세요.");
         if (request.deliveryFeeType() != NaverProductCreateRequest.DeliveryFeeType.FREE && request.deliveryFee() <= 0)
@@ -130,7 +146,15 @@ public class NaverProductCreationBusiness {
             throw bad("현재 판매자 주소록에 저장된 국내 출고지와 반품/교환지를 선택해 주세요.");
     }
 
-    private Map<String, Object> payload(NaverProductCreateRequest r, List<String> urls, Map<String, Object> notice) {
+    private AiStudioExport studioDetail(Long workspaceId, Long userId, Long outputId) {
+        if (outputId == null) return null;
+        var detail = studio.exportOutput(workspaceId, userId, outputId);
+        if (detail.kind() != AiStudioKind.DETAIL_PAGE || blank(detail.detailHtml())
+                || !detail.detailHtml().contains("{{STUDIO_IMAGE}}")) throw bad("완성된 AI 상세페이지를 선택해 주세요.");
+        return detail;
+    }
+
+    private Map<String, Object> payload(NaverProductCreateRequest r, List<String> urls, Map<String, Object> notice, String studioHtml) {
         var image = new LinkedHashMap<String, Object>();
         image.put("representativeImage", Map.of("url", urls.get(0)));
         if (urls.size() > 1) image.put("optionalImages", urls.subList(1, urls.size()).stream().map(url -> Map.of("url", url)).toList());
@@ -144,8 +168,9 @@ public class NaverProductCreationBusiness {
         var product = new LinkedHashMap<String, Object>();
         product.put("statusType", "SALE"); product.put("saleType", "NEW"); product.put("leafCategoryId", r.categoryId());
         product.put("name", r.name().strip()); product.put("salePrice", r.salePrice()); product.put("stockQuantity", r.stockQuantity());
-        // Detail is plain text in our form. Never render or forward untrusted HTML supplied by the browser.
-        product.put("detailContent", "<div>" + HtmlUtils.htmlEscape(r.detailContent().strip()).replace("\r\n", "\n").replace("\n", "<br>") + "</div>");
+        // Only saved, server-rendered studio HTML is trusted. Browser text is always escaped.
+        String extraDetail = blank(r.detailContent()) ? "" : "<div>" + HtmlUtils.htmlEscape(r.detailContent().strip()).replace("\r\n", "\n").replace("\n", "<br>") + "</div>";
+        product.put("detailContent", (studioHtml == null ? "" : studioHtml) + extraDetail);
         product.put("images", image);
         product.put("deliveryInfo", Map.of("deliveryType", "DELIVERY", "deliveryAttributeType", "NORMAL",
                 "deliveryCompany", r.deliveryCompany(), "deliveryFee", fee,

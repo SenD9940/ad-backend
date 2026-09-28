@@ -21,3 +21,8 @@ aes:
 token:
   secret:
     key: ${TOKEN_SECRET_KEY}
+
+app:
+  aws:
+    s3:
+      key-prefix: ${S3_KEY_PREFIX:ad-backend}

@@ -2,6 +2,8 @@
 
 `admin-api`는 일반 서비스 `api`와 같은 DB를 사용하는 별도 Spring Boot 애플리케이션이다. 기본 포트는 `8481`, 공통 경로는 `/admin-api`다. 활성 관리자(`users.status=REGISTERED`, `users.role=ADMIN`)만 사용할 수 있다. 브라우저 화면은 `http://localhost:3400/admin/login`에서 열며, [로컬 로그인 상세 안내](admin-local-login.md)에 계정 준비와 실행 방법을 정리했다.
 
+AI 스튜디오 샘플 등록·이미지 업로드·공개 관리는 `/admin-api/ai-studio/templates`와 `/admin/studio` 화면에서 제공한다. `/admin-api/ai-studio/categories`에서 카테고리를 먼저 등록하고 샘플에 `category_id`로 연결한다. 업로드 후 `/admin-api/ai-studio/templates/analyze`가 이미지의 스타일을 분석해 이름·설명·생성 지침을 자동 입력한다. 분석은 관리자 API에 설정된 기존 `app.ai-creative.api-key`를 사용한다. 환경변수는 `OPEN_API_KEY`를 사용하며 기존 `OPENAI_API_KEY`도 호환된다. 설정 누락·분석 실패 시에도 이미지와 카테고리로 기본 내용을 저장할 수 있다. 필요한 마이그레이션과 S3·OpenAI 설정은 [AI 스튜디오 안내](ai-studio.md)를 참고한다.
+
 ## 코드 구조
 
 `api` 모듈과 같은 도메인 계층을 사용한다. 자세한 패키지 구성은 [admin-api README](../admin-api/README.md)를 참고한다.

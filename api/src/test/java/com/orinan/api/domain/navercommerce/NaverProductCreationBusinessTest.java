@@ -3,6 +3,9 @@ package com.orinan.api.domain.navercommerce;
 import com.orinan.api.common.code.ApiCode;
 import com.orinan.api.common.exception.ApiException;
 import com.orinan.api.common.time.SeoulDateTimes;
+import com.orinan.api.domain.aistudio.service.AiStudioService;
+import com.orinan.api.domain.aistudio.service.AiStudioExport;
+import com.orinan.db.aistudio.enums.AiStudioKind;
 import com.orinan.api.domain.navercommerce.business.NaverProductCreationBusiness;
 import com.orinan.api.domain.navercommerce.client.NaverProductCreationClient;
 import com.orinan.api.domain.navercommerce.controller.model.NaverProductCreateRequest;
@@ -39,8 +42,9 @@ class NaverProductCreationBusinessTest {
     private final NaverCommerceClient commerce=mock(NaverCommerceClient.class);
     private final NaverProductCreationClient client=mock(NaverProductCreationClient.class);
     private final NaverProductImageValidator images=mock(NaverProductImageValidator.class);
+    private final AiStudioService studio=mock(AiStudioService.class);
     private final JsonMapper json=JsonMapper.builder().propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE).build();
-    private final NaverProductCreationBusiness business=new NaverProductCreationBusiness(access,connections,commerce,client,images,new NaverProductNoticeSchema(json));
+    private final NaverProductCreationBusiness business=new NaverProductCreationBusiness(access,connections,commerce,client,images,new NaverProductNoticeSchema(json),studio);
     private final Store store=new Store(30L,20L,"123456","스토어","https://smartstore.naver.com/test","판매자",false);
     private final Credentials credentials=credentials("seller-token-private",false);
     private final List<MultipartFile> files=List.of(new MockMultipartFile("images","private-name.png","image/png",new byte[]{1}));
@@ -103,6 +107,52 @@ class NaverProductCreationBusinessTest {
         assertThatThrownBy(()->business.create(10L,30L,2L,changed(x->x.put("notice_fields",Map.of())),files)).isInstanceOf(ApiException.class);
         assertThatThrownBy(()->business.create(10L,30L,2L,changed(x->x.put("delivery_fee_type","FREE")),files)).isInstanceOf(ApiException.class);
         verifyNoInteractions(client,commerce);
+    }
+
+    @Test @SuppressWarnings("unchecked") void studioDetailUsesStoredHtmlAndPermanentNaverImageAndEscapesAdditionalText() {
+        when(studio.exportOutput(10L, 2L, 7L)).thenReturn(new AiStudioExport(AiStudioKind.DETAIL_PAGE,
+                "샘플 상품", "<section><h2>저장된 상세</h2><img src=\"{{STUDIO_IMAGE}}\"></section>", new byte[]{2}, "image/png"));
+        when(client.uploadImages(anyString(), anyList())).thenReturn(
+                List.of("https://shop-phinf.pstatic.net/product.png"), List.of("https://shop-phinf.pstatic.net/detail.png"));
+        business.create(10L, 30L, 2L, changed(value -> value.put("studio_output_id", 7)), files);
+        var payload = ArgumentCaptor.forClass(Map.class);
+        verify(client).create(eq("seller-token-private"), payload.capture());
+        var html = json.valueToTree(payload.getValue()).path("originProduct").path("detailContent").asString();
+        assertThat(html).contains("<h2>저장된 상세</h2>", "src=\"https://shop-phinf.pstatic.net/detail.png\"", "&lt;script&gt;")
+                .doesNotContain("{{STUDIO_IMAGE}}", "<script>", "X-Amz-");
+        verify(client, times(2)).uploadImages(anyString(), anyList());
+        var uploads = ArgumentCaptor.forClass(List.class);
+        verify(client, times(2)).uploadImages(eq("seller-token-private"), uploads.capture());
+        var detailImage = (NaverProductImageValidator.ImageData) uploads.getAllValues().get(1).get(0);
+        assertThat(detailImage.bytes()).containsExactly((byte) 2);
+        assertThat(detailImage.contentType()).isEqualTo("image/png");
+    }
+
+    @Test void studioDetailAllowsEmptyAdditionalTextButRejectsUnownedOrWrongKindBeforeNaverWrites() {
+        when(studio.exportOutput(10L, 2L, 7L)).thenThrow(bad());
+        var request = changed(value -> { value.put("studio_output_id", 7); value.put("detail_content", ""); });
+        assertThatThrownBy(() -> business.create(10L,30L,2L,request,files)).isInstanceOf(ApiException.class);
+        verifyNoInteractions(client, commerce);
+        doReturn(new AiStudioExport(AiStudioKind.AD_IMAGE, "image", null, new byte[]{2}, "image/png")).when(studio).exportOutput(10L, 2L, 7L);
+        assertThatThrownBy(() -> business.create(10L,30L,2L,request,files)).isInstanceOf(ApiException.class);
+        verifyNoInteractions(client, commerce);
+        when(studio.exportOutput(10L, 2L, 7L)).thenReturn(new AiStudioExport(AiStudioKind.DETAIL_PAGE, "detail", "<img src=\"{{STUDIO_IMAGE}}\">", new byte[]{2}, "image/png"));
+        assertThat(business.create(10L,30L,2L,request,files)).isEqualTo(created);
+    }
+
+    @Test void missingDetailWithoutStudioAndRevocationBetweenStudioUploadAndProductWriteAreRejected() {
+        assertThatThrownBy(() -> business.create(10L,30L,2L,changed(value -> value.put("detail_content", " ")),files)).isInstanceOf(ApiException.class);
+        verifyNoInteractions(client, commerce, studio);
+        when(studio.exportOutput(10L, 2L, 7L)).thenReturn(new AiStudioExport(AiStudioKind.DETAIL_PAGE, "detail", "<img src=\"{{STUDIO_IMAGE}}\">", new byte[]{2}, "image/png"));
+        var revoked = new AtomicBoolean();
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> { if (revoked.get()) throw bad(); return null; }).when(access).requireUnchanged(10L, 2L, store);
+        when(client.uploadImages(anyString(), anyList())).thenAnswer(invocation -> {
+            if (calls.incrementAndGet() == 2) revoked.set(true);
+            return List.of("https://shop-phinf.pstatic.net/image.png");
+        });
+        assertThatThrownBy(() -> business.create(10L,30L,2L,changed(value -> value.put("studio_output_id",7)),files)).isInstanceOf(ApiException.class);
+        verify(client, never()).create(anyString(), anyMap());
     }
 
     @Test void ambiguousOrDifferentSmartStoreChannelBlocksEveryWrite() {

@@ -9,7 +9,7 @@ public record NaverProductCreateRequest(
         @NotBlank @Pattern(regexp = "[0-9]{1,20}") String categoryId,
         @NotNull @Min(1) @Max(999999990) Long salePrice,
         @NotNull @Min(1) @Max(99999999) Integer stockQuantity,
-        @NotBlank @Size(max = 50000) String detailContent,
+        @Size(max = 50000) String detailContent,
         @NotBlank @Pattern(regexp = "[0-9]{2,12}") String originAreaCode,
         @Size(max = 200) String originAreaContent,
         @Size(max = 200) String importer,
@@ -28,7 +28,8 @@ public record NaverProductCreateRequest(
         @NotBlank @Size(max = 40) String noticeType,
         @NotNull @Size(max = 60) Map<String, Object> noticeFields,
         @NotNull DisplayStatus displayStatus,
-        @NotNull Boolean naverShoppingRegistration
+        @NotNull Boolean naverShoppingRegistration,
+        @Positive Long studioOutputId
 ) {
     public enum TaxType { TAX, DUTYFREE, SMALL }
     public enum DeliveryFeeType { FREE, PAID, CONDITIONAL_FREE }

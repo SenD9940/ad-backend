@@ -15,6 +15,8 @@
 
 원상품은 네이버 등록 API 규칙에 따라 `SALE`로 생성한다. 전시 상태 `ON`/`SUSPENSION`은 채널의 전시 여부이며 임시 저장 상태가 아니다. 재고는 1 이상이어야 한다. 상세 설명은 HTML 입력이 아닌 텍스트로 받아 서버에서 이스케이프하고 줄바꿈만 변환한다. [네이버 상품 등록 API](https://apicenter.commerce.naver.com/docs/commerce-api/current/create-product-product)
 
+선택적으로 [AI 스튜디오](ai-studio.md)에서 저장한 상세페이지를 사용할 수 있다. 이 기능에는 별도 AI 스튜디오 SQL과 서버 설정이 필요하다. 브라우저에서 임의 HTML을 받지 않으며, 같은 워크스페이스에서 생성이 완료된 `DETAIL_PAGE` 결과의 내부 ID를 `studio_output_id`로 전달한다. 서버가 저장된 안전한 HTML을 읽고 상세 이미지를 네이버에 별도로 업로드한 뒤 영구 URL로 치환한다. 이때 `detail_content`는 선택적 추가 텍스트이며 생략할 수 있다. `studio_output_id`가 없으면 기존처럼 상세 텍스트가 필수다.
+
 ## 서비스 API
 
 공통 경로: `/api/workspaces/{workspaceId}/naver/stores/{assetId}`. `assetId`는 저장 자산 내부 ID다. 서비스 Access Token과 워크스페이스 멤버 권한이 필요하다. 응답은 `Api.body`와 snake_case이며 `Cache-Control: no-store`를 설정한다.
