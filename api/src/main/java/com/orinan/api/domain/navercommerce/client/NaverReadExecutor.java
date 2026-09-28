@@ -129,7 +129,7 @@ public class NaverReadExecutor {
         return new ApiException(ApiCode.SERVER_ERROR, "네이버 전체 조회 시간이 초과되었습니다. 기간을 줄여 다시 조회해 주세요.");
     }
 
-    public enum Resource { PRODUCTS, ORDERS }
+    public enum Resource { PRODUCTS, ORDERS, CATEGORIES, ORIGINS, ADDRESSES, PRODUCT_NOTICES }
     public enum Quota { NONE, SECONDS, ROUND, UNKNOWN }
 
     @FunctionalInterface
