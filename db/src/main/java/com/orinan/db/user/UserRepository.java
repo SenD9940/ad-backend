@@ -12,6 +12,10 @@ import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<UserEntity, Long> {
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from UserEntity u where u.id = :id")
+    Optional<UserEntity> findByIdForUpdate(@Param("id") Long id);
+
     Optional<UserEntity> findByIdAndStatus(Long id, UserStatus status);
 
     @Query("select u from UserEntity u where lower(u.email) = lower(:email) and u.status = :status")

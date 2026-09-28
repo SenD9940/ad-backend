@@ -32,6 +32,7 @@ public class TokenBusiness {
 
     @Transactional
     public TokenResponse issueToken(UserEntity userEntity) {
+        tokenService.lockRegisteredUser(userEntity.getId());
         TokenDto accessTokenDto = tokenService.issueAccessToken(userEntity.getId());
         TokenDto refreshTokenDto = tokenService.issueRefreshToken(userEntity.getId());
         return tokenConverter.toResponse(accessTokenDto, refreshTokenDto);

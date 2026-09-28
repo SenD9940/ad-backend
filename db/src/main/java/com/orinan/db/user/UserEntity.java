@@ -38,6 +38,11 @@ public class UserEntity extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private UserRole role;
 
+    /** Incremented when an administrator revokes sessions or changes account access. */
+    @Column(nullable = false)
+    @lombok.Builder.Default
+    private long authVersion = 0;
+
     private LocalDateTime lastLoginAt;
 
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)

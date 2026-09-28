@@ -1,6 +1,9 @@
 package com.orinan.api.interceptor;
 
 import com.orinan.api.common.exception.ApiException;
+import com.orinan.api.domain.support.interceptor.SupportAccessInterceptor;
+import com.orinan.api.domain.support.exception.SupportErrorCode;
+import com.orinan.api.domain.support.model.SupportContext;
 import com.orinan.api.domain.token.business.TokenBusiness;
 import com.orinan.api.domain.token.exception.TokenErrorCode;
 import com.orinan.api.domain.token.helper.AuthorizationTokens;
@@ -32,6 +35,13 @@ public class AuthorizationInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+
+        if (request.getAttribute(SupportContext.REQUEST_ATTRIBUTE) instanceof SupportContext) {
+            return true;
+        }
+        if (request.getHeader(SupportAccessInterceptor.HEADER) != null) {
+            throw new ApiException(SupportErrorCode.INVALID_SESSION);
+        }
 
         if(HttpMethod.OPTIONS.matches(request.getMethod())) {
             return true;

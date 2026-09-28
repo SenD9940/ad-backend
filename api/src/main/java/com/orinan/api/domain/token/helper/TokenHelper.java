@@ -82,11 +82,11 @@ public class TokenHelper implements TokenHelperIfs {
             return new HashMap<>(result.getPayload());
         } catch (Exception e) {
             if (e instanceof SignatureException) {
-                throw new ApiException(TokenErrorCode.INVALID_TOKEN, e);
+                throw new ApiException(TokenErrorCode.INVALID_TOKEN);
             } else if (e instanceof ExpiredJwtException) {
-                throw new ApiException(TokenErrorCode.EXPIRED_TOKEN, e);
+                throw new ApiException(TokenErrorCode.EXPIRED_TOKEN);
             } else {
-                throw new ApiException(TokenErrorCode.TOKEN_EXCEPTION, e);
+                throw new ApiException(TokenErrorCode.TOKEN_EXCEPTION);
             }
         }
     }

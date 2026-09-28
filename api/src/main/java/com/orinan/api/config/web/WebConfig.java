@@ -1,6 +1,7 @@
 package com.orinan.api.config.web;
 
 import com.orinan.api.interceptor.AuthorizationInterceptor;
+import com.orinan.api.domain.support.interceptor.SupportAccessInterceptor;
 import com.orinan.api.resolver.UserSessionResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
@@ -16,6 +17,7 @@ import java.util.List;
 public class WebConfig implements WebMvcConfigurer {
 
     private final AuthorizationInterceptor authorizationInterceptor;
+    private final SupportAccessInterceptor supportAccessInterceptor;
     private final UserSessionResolver userSessionResolver;
 
     private final List<String> OPEN_API = List.of(
@@ -45,6 +47,7 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(supportAccessInterceptor).order(-100);
         registry.addInterceptor(authorizationInterceptor)
                 .excludePathPatterns(OPEN_API)
                 .excludePathPatterns(DEFAULT_EXCLUDE)
