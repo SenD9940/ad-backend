@@ -1,0 +1,27 @@
+# 서버 전용 예시입니다. 등록 전에는 두 플래그를 false로 유지합니다.
+# 실제 설정으로 가져올 때 빈 항목을 공식 등록 정보로 채웁니다.
+app:
+  naver-commerce:
+    app-id: "${NAVER_COMMERCE_APP_ID:}"
+    app-secret: "${NAVER_COMMERCE_APP_SECRET:}"
+
+naver:
+  solution:
+    enabled: false
+    provider-contract-verified: false
+    application-ref: ""
+    solution-id: ""
+    # application.yml에서 app.naver-commerce의 앱 정보를 자동 참조합니다.
+    # 별도 앱을 쓰려면 client-id/client-secret 두 값을 함께 명시합니다.
+    credential-version: 1
+    jwt-public-key: "${NAVER_SOLUTION_JWT_PUBLIC_KEY:}"
+    public-base-url: ""
+    frontend-base-url: ""
+    marketplace-url: ""
+    # 발급받은 공식 URL의 쿼리 값에 {state}, {callback}를 지정합니다.
+    authorization-url-template: ""
+    callback-state-parameter: ""
+    callback-proof-parameter: ""
+    marketplace-token-parameter: ""
+    webhook-header-name: ""
+    webhook-key: "${NAVER_SOLUTION_WEBHOOK_KEY:}"

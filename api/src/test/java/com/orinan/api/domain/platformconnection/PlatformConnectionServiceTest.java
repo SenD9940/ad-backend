@@ -64,11 +64,17 @@ class PlatformConnectionServiceTest {
         when(members.exists(new WorkspaceMemberId(10L, 2L))).thenReturn(true);
         when(connections.findAllByWorkspaceIdOrderByIdDesc(10L)).thenReturn(List.of(connection));
         when(naverConnections.findById(20L)).thenReturn(
+                Optional.of(NaverConnectionEntity.builder().accessToken("renewable-token").expiresAt(expiredAt).build()),
                 Optional.of(NaverConnectionEntity.builder().expiresAt(expiredAt).build()), Optional.empty());
 
         var response = service.findAll(10L, 2L).get(0);
         assertThat(response.expiresAt()).isEqualTo(expiredAt);
         assertThat(response.requiresReauth()).isFalse();
+        assertThat(response.connectionMode()).isEqualTo("MANUAL");
+        assertThat(response.connectionStatus()).isEqualTo("CONNECTED");
+        var revoked = service.findAll(10L, 2L).get(0);
+        assertThat(revoked.requiresReauth()).isTrue();
+        assertThat(revoked.connectionStatus()).isEqualTo("REAUTH_REQUIRED");
         assertThat(service.findAll(10L, 2L).get(0).requiresReauth()).isTrue();
         verifyNoInteractions(metaConnections);
     }

@@ -7,6 +7,7 @@ import com.orinan.api.domain.platformconnection.controller.model.PlatformAssetRe
 import com.orinan.api.domain.platformconnection.controller.model.PlatformConnectionResponse;
 import com.orinan.api.domain.platformconnection.meta.MetaGraphClient.AuthorizedAccount;
 import com.orinan.api.domain.platformconnection.meta.MetaGraphClient.DiscoveredAsset;
+import com.orinan.api.domain.platformconnection.naver.integration.NaverSolutionCredentialResolver;
 import com.orinan.api.domain.user.exception.UserErrorCode;
 import com.orinan.api.domain.user.service.UserService;
 import com.orinan.api.domain.workspace.service.WorkspaceService;
@@ -16,6 +17,7 @@ import com.orinan.db.metaasset.MetaAssetRepository;
 import com.orinan.db.metaconnection.MetaConnectionEntity;
 import com.orinan.db.metaconnection.MetaConnectionRepository;
 import com.orinan.db.naverconnection.NaverConnectionRepository;
+import com.orinan.db.naverconnection.enums.NaverCredentialSource;
 import com.orinan.db.platformasset.PlatformAssetEntity;
 import com.orinan.db.platformasset.PlatformAssetRepository;
 import com.orinan.db.platformconnection.PlatformConnectionEntity;
@@ -27,6 +29,7 @@ import com.orinan.db.workspace.WorkspaceRepository;
 import com.orinan.db.workspacemember.WorkspaceMemberId;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +49,12 @@ public class PlatformConnectionService {
     private final UserService users;
     private final EntityManager entityManager;
     private final NaverConnectionRepository naverConnections;
+    private NaverSolutionCredentialResolver solutionCredentials;
+
+    @Autowired(required = false)
+    public void setSolutionCredentials(NaverSolutionCredentialResolver solutionCredentials) {
+        this.solutionCredentials = solutionCredentials;
+    }
 
     @Transactional(readOnly = true)
     public void requireOwner(Long workspaceId, Long userId) {
@@ -172,12 +181,18 @@ public class PlatformConnectionService {
                 ? naverConnections.findById(connection.getId()).orElse(null) : null;
         boolean requiresReauth = Boolean.TRUE.equals(connection.getRequiresReauth())
                 || (connection.getProviderType() == ProviderType.META && (meta == null || expired(meta)))
-                || (connection.getProviderType() == ProviderType.NAVER && naver == null);
+                || (connection.getProviderType() == ProviderType.NAVER && (naver == null
+                    || naver.getAccessToken() == null
+                    || naver.getCredentialSource() == NaverCredentialSource.SOLUTION
+                        && (solutionCredentials == null || !solutionCredentials.available(naver))));
         // Naver client credentials can renew an expired token without another user login.
         var expiresAt = meta != null ? meta.getExpiresAt() : naver != null ? naver.getExpiresAt() : null;
         return new PlatformConnectionResponse(connection.getId(), connection.getWorkspace().getId(),
                 connection.getProviderType(), connection.getExternalAccountId(), connection.getAccountName(),
-                requiresReauth, expiresAt, savedAssets(connection.getId()));
+                requiresReauth, expiresAt, savedAssets(connection.getId()),
+                connection.getProviderType() != ProviderType.NAVER ? null
+                        : naver != null && naver.getCredentialSource() == NaverCredentialSource.SOLUTION ? "SOLUTION" : "MANUAL",
+                connection.getProviderType() != ProviderType.NAVER ? null : requiresReauth ? "REAUTH_REQUIRED" : "CONNECTED");
     }
 
     private List<PlatformAssetResponse> savedAssets(Long connectionId) {

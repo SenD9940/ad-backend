@@ -69,6 +69,7 @@ public class NaverConnectionBusiness {
             }
         }
         platformConnections.requireMember(workspaceId, userId);
+        service.requireUnchanged(workspaceId, connectionId, userId, credentials);
         return new FetchedChannels(credentials, channels.stream().filter(channel -> "STOREFARM".equals(channel.channelType())).toList());
     }
 

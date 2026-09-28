@@ -9,12 +9,14 @@ import com.orinan.api.domain.platformconnection.controller.model.PlatformConnect
 import com.orinan.api.domain.platformconnection.naver.NaverCommerceClient.Channel;
 import com.orinan.api.domain.platformconnection.naver.NaverCommerceClient.IssuedToken;
 import com.orinan.api.domain.platformconnection.naver.NaverCommerceClient.SellerAccount;
+import com.orinan.api.domain.platformconnection.naver.integration.NaverSolutionCredentialResolver;
 import com.orinan.api.domain.user.service.UserService;
 import com.orinan.db.naverasset.NaverAssetEntity;
 import com.orinan.db.naverasset.NaverAssetRepository;
 import com.orinan.db.naverconnection.NaverConnectionEntity;
 import com.orinan.db.naverconnection.NaverConnectionRepository;
 import com.orinan.db.naverconnection.enums.NaverTokenType;
+import com.orinan.db.naverconnection.enums.NaverCredentialSource;
 import com.orinan.db.platformasset.PlatformAssetEntity;
 import com.orinan.db.platformasset.PlatformAssetRepository;
 import com.orinan.db.platformasset.enums.AssetType;
@@ -27,6 +29,7 @@ import com.orinan.db.workspace.WorkspaceEntity;
 import com.orinan.db.workspace.WorkspaceRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +49,12 @@ public class NaverConnectionService {
     private final PlatformConnectionService platformConnections;
     private final UserService users;
     private final EntityManager entityManager;
+    private NaverSolutionCredentialResolver solutionCredentials;
+
+    @Autowired(required = false)
+    public void setSolutionCredentials(NaverSolutionCredentialResolver solutionCredentials) {
+        this.solutionCredentials = solutionCredentials;
+    }
 
     @Transactional
     public PlatformConnectionResponse saveConnection(Long workspaceId, Long userId, NaverConnectRequest request,
@@ -71,6 +80,11 @@ public class NaverConnectionService {
         detail.setAccountId(request.getAccountId());
         detail.setAccessToken(token.accessToken());
         detail.setExpiresAt(token.expiresAt());
+        detail.setCredentialSource(NaverCredentialSource.MANUAL);
+        detail.setApplicationRef(null);
+        detail.setSolutionSubscriptionId(null);
+        detail.setBoundSubscriptionGeneration(null);
+        detail.setCredentialVersion(detail.getCredentialVersion() + 1);
         naverConnections.saveAndFlush(detail);
         return platformConnections.findById(workspaceId, connection.getId(), userId);
     }
@@ -80,6 +94,15 @@ public class NaverConnectionService {
         platformConnections.requireMember(workspaceId, userId);
         var detail = loadConnection(workspaceId, connectionId);
         return snapshot(detail);
+    }
+
+    @Transactional(readOnly = true)
+    public void requireUnchanged(Long workspaceId, Long connectionId, Long userId, Credentials expected) {
+        platformConnections.requireMember(workspaceId, userId);
+        var current = snapshot(loadConnection(workspaceId, connectionId));
+        if (!current.sameAccountCredentials(expected) || !Objects.equals(current.accessToken(), expected.accessToken())) {
+            throw connectionChanged();
+        }
     }
 
     @Transactional
@@ -176,8 +199,24 @@ public class NaverConnectionService {
     }
 
     private Credentials snapshot(NaverConnectionEntity detail) {
-        return new Credentials(detail.getConnection().getExternalAccountId(), detail.getClientId(), detail.getClientSecret(),
-                detail.getTokenType(), detail.getAccountId(), detail.getAccessToken(), detail.getExpiresAt());
+        String clientId = detail.getClientId();
+        String clientSecret = detail.getClientSecret();
+        long subscriptionVersion = 0;
+        long applicationCredentialVersion = 0;
+        var source = detail.getCredentialSource() == null ? NaverCredentialSource.MANUAL : detail.getCredentialSource();
+        if (source == NaverCredentialSource.SOLUTION) {
+            if (solutionCredentials == null) throw reauthRequired();
+            var resolved = solutionCredentials.resolve(detail);
+            clientId = resolved.clientId();
+            clientSecret = resolved.clientSecret();
+            subscriptionVersion = resolved.subscriptionVersion();
+            applicationCredentialVersion = resolved.applicationCredentialVersion();
+        }
+        if (clientId == null || clientSecret == null || detail.getAccessToken() == null) throw reauthRequired();
+        return new Credentials(detail.getConnection().getExternalAccountId(), clientId, clientSecret,
+                detail.getTokenType(), detail.getAccountId(), detail.getAccessToken(), detail.getExpiresAt(),
+                source, detail.getApplicationRef(), detail.getSolutionSubscriptionId(),
+                detail.getBoundSubscriptionGeneration(), detail.getCredentialVersion(), subscriptionVersion, applicationCredentialVersion);
     }
 
     private ApiException reauthRequired() {
@@ -189,12 +228,27 @@ public class NaverConnectionService {
     }
 
     public record Credentials(String accountUid, String clientId, String clientSecret, NaverTokenType tokenType,
-                              String accountId, String accessToken, LocalDateTime expiresAt) {
+                              String accountId, String accessToken, LocalDateTime expiresAt,
+                              NaverCredentialSource credentialSource, String applicationRef, Long subscriptionId,
+                              Long subscriptionGeneration, long credentialVersion, long subscriptionVersion,
+                              long applicationCredentialVersion) {
+
+        public Credentials(String accountUid, String clientId, String clientSecret, NaverTokenType tokenType,
+                           String accountId, String accessToken, LocalDateTime expiresAt) {
+            this(accountUid, clientId, clientSecret, tokenType, accountId, accessToken, expiresAt,
+                    NaverCredentialSource.MANUAL, null, null, null, 0, 0, 0);
+        }
 
         boolean sameAccountCredentials(Credentials other) {
             return Objects.equals(accountUid, other.accountUid) && Objects.equals(clientId, other.clientId)
                     && Objects.equals(clientSecret, other.clientSecret) && tokenType == other.tokenType
-                    && Objects.equals(accountId, other.accountId);
+                    && Objects.equals(accountId, other.accountId)
+                    && credentialSource == other.credentialSource
+                    && Objects.equals(applicationRef, other.applicationRef)
+                    && Objects.equals(subscriptionId, other.subscriptionId)
+                    && Objects.equals(subscriptionGeneration, other.subscriptionGeneration)
+                    && credentialVersion == other.credentialVersion && subscriptionVersion == other.subscriptionVersion
+                    && applicationCredentialVersion == other.applicationCredentialVersion;
         }
 
         @Override

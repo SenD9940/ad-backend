@@ -104,6 +104,98 @@ class MetaAdvertisingClientTest {
     }
 
     @Test
+    void createsOnePausedCampaignWithFormParametersAndCredentialsOutsideTheUrl() {
+        json("{\"id\":\"120000001\"}");
+
+        assertThat(client.createCampaign("act_123", TOKEN, "가을 & 겨울 캠페인", "OUTCOME_SALES", List.of(), List.of()))
+                .isEqualTo(new MetaGraphClient.CreatedCampaign("120000001"));
+
+        assertThat(requests).hasSize(1);
+        var request = requests.get(0);
+        assertThat(request.method()).isEqualTo(HttpMethod.POST);
+        assertThat(request.url().toString()).isEqualTo("https://graph.facebook.com/v26.0/act_123/campaigns");
+        assertThat(request.headers().getFirst("Authorization")).isEqualTo("Bearer " + TOKEN);
+        assertThat(request.headers().getContentType()).isEqualTo(MediaType.APPLICATION_FORM_URLENCODED);
+        var form = form(request);
+        assertThat(form).containsEntry("name", "가을 & 겨울 캠페인")
+                .containsEntry("objective", "OUTCOME_SALES").containsEntry("status", "PAUSED")
+                .containsEntry("buying_type", "AUCTION").containsEntry("special_ad_categories", "[]")
+                .containsEntry("is_adset_budget_sharing_enabled", "false")
+                .containsKey("appsecret_proof")
+                .doesNotContainKeys("access_token", "client_secret", "special_ad_category_country", "daily_budget", "lifetime_budget");
+        assertThat(form.get("appsecret_proof")).matches("[a-f0-9]{64}");
+        assertThat(form.values()).doesNotContain(TOKEN, SECRET);
+    }
+
+    @Test
+    void specialAdCategoriesAndCountriesAreEncodedAsJsonArraysInForm() {
+        json("{\"id\":\"120000002\"}");
+
+        client.createCampaign("act_123", TOKEN, "채용", "OUTCOME_LEADS", List.of("EMPLOYMENT"), List.of("KR", "US"));
+
+        var form = form(requests.get(0));
+        assertThat(mapper.readTree(form.get("special_ad_categories"))).isEqualTo(mapper.readTree("[\"EMPLOYMENT\"]"));
+        assertThat(mapper.readTree(form.get("special_ad_category_country"))).isEqualTo(mapper.readTree("[\"KR\",\"US\"]"));
+    }
+
+    @Test
+    void invalidCampaignOrAccountIsRejectedBeforeCreatingAnything() {
+        assertThatThrownBy(() -> client.createCampaign("act_123/other", TOKEN, "캠페인", "OUTCOME_SALES", List.of(), List.of()))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, " ", "OUTCOME_SALES", List.of(), List.of()))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, "x".repeat(256), "OUTCOME_SALES", List.of(), List.of()))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, "캠페인", "CONVERSIONS", List.of(), List.of()))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, "캠페인", null, List.of(), List.of()))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, "캠페인", "OUTCOME_SALES", null, List.of()))
+                .isInstanceOf(ApiException.class);
+        assertThat(requests).isEmpty();
+    }
+
+    @Test
+    void campaignCreationNeverRetriesRejectedOrUncertainWritesAndSanitizesTheirErrors() {
+        for (HttpStatus status : List.of(HttpStatus.BAD_REQUEST, HttpStatus.FORBIDDEN,
+                HttpStatus.TOO_MANY_REQUESTS, HttpStatus.SERVICE_UNAVAILABLE)) {
+            response(status, "{\"error\":{\"message\":\"" + TOKEN + " " + SECRET + "\"}}");
+            assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, "캠페인", "OUTCOME_TRAFFIC", List.of(), List.of()))
+                    .isInstanceOf(ApiException.class).hasNoCause().hasMessageNotContaining(TOKEN).hasMessageNotContaining(SECRET);
+        }
+        assertThat(requests).hasSize(4).allSatisfy(request -> assertThat(request.method()).isEqualTo(HttpMethod.POST));
+        for (String body : List.of("{}", "{\"id\":\"invalid/id\"}", "{\"id\":1}", "invalid JSON " + TOKEN)) {
+            json(body);
+            assertThatThrownBy(() -> client.createCampaign("act_123", TOKEN, "캠페인", "OUTCOME_TRAFFIC", List.of(), List.of()))
+                    .isInstanceOf(ApiException.class).hasMessageContaining("캠페인 목록을 먼저 확인")
+                    .hasNoCause().hasMessageNotContaining(TOKEN);
+        }
+        assertThat(requests).hasSize(8);
+    }
+
+    @Test
+    void transportFailureAfterSendingCampaignDoesNotRetryOrLeakTheToken() {
+        var failing = new MetaGraphClient(WebClient.builder().exchangeFunction(request -> {
+            requests.add(request);
+            return Mono.error(new IllegalStateException("network failure " + TOKEN));
+        }), properties, mapper);
+
+        assertThatThrownBy(() -> failing.createCampaign("act_123", TOKEN, "캠페인", "OUTCOME_TRAFFIC", List.of(), List.of()))
+                .isInstanceOf(ApiException.class).hasMessageContaining("캠페인 목록을 먼저 확인")
+                .hasNoCause().hasMessageNotContaining(TOKEN);
+        assertThat(requests).hasSize(1);
+    }
+
+    private Map<String, String> form(ClientRequest request) {
+        var output = new MockClientHttpRequest(request.method(), request.url());
+        request.writeTo(output, strategies).block();
+        return Arrays.stream(output.getBodyAsString().block().split("&"))
+                .map(pair -> pair.split("=", 2))
+                .collect(Collectors.toMap(pair -> URLDecoder.decode(pair[0], StandardCharsets.UTF_8),
+                        pair -> URLDecoder.decode(pair[1], StandardCharsets.UTF_8)));
+    }
+
+    @Test
     void insightsKeepLevelAndDateRangeOnAllPagesAndParseDecimalStringsExactly() {
         json("{\"data\":[" + insight("111", "\"19.99\"", "\"300\"", "\"7\"") + "],"
                 + "\"paging\":{\"next\":\"https://evil.example/\",\"cursors\":{\"after\":\"next-page\"}}}");
@@ -220,14 +312,69 @@ class MetaAdvertisingClientTest {
             json("{\"data\":[" + insight("111", spend, "\"10\"", "\"2\"") + "]}");
             assertThatThrownBy(() -> client.getCampaignInsights("act_123", TOKEN, SINCE, UNTIL)).isInstanceOf(ApiException.class);
         }
-        for (String count : List.of("\"-1\"", "-1", "\"1.5\"", "1.5", "\"9223372036854775808\"", "9223372036854775808", "null")) {
+        for (String count : List.of("\"-1\"", "-1", "\"1.5\"", "1.5", "\"9223372036854775808\"", "9223372036854775808",
+                "\"9223372036854775807.1\"", "9223372036854775807.1", "1.0000000000000001",
+                "true", "{}", "[]", "\"\"", "\" \"", "\"NaN\"", "\"1e100000\"",
+                "\"" + "0".repeat(65) + "\"")) {
             json("{\"data\":[" + insight("111", "\"1\"", count, "\"2\"") + "]}");
             assertThatThrownBy(() -> client.getCampaignInsights("act_123", TOKEN, SINCE, UNTIL)).isInstanceOf(ApiException.class);
             json("{\"data\":[" + insight("111", "\"1\"", "\"10\"", count) + "]}");
             assertThatThrownBy(() -> client.getCampaignInsights("act_123", TOKEN, SINCE, UNTIL)).isInstanceOf(ApiException.class);
         }
-        json("{\"data\":[{\"account_id\":\"123\",\"spend\":\"1\",\"impressions\":\"1\"}]}");
-        assertThatThrownBy(() -> client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL)).isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void missingOrNullInsightCountsPreserveKnownMetricsForAccountAndCampaign() {
+        for (String field : List.of("impressions", "clicks")) {
+            for (boolean missing : List.of(true, false)) {
+                String row = insight("111", "\"12.50\"", "\"10\"", "\"2\"");
+                var body = (tools.jackson.databind.node.ObjectNode) mapper.readTree(row);
+                if (missing) body.remove(field); else body.putNull(field);
+                for (boolean campaignLevel : List.of(false, true)) {
+                    json("{\"data\":[" + body + "]}");
+                    var result = (campaignLevel ? client.getCampaignInsights("act_123", TOKEN, SINCE, UNTIL)
+                            : client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL)).get(0);
+                    assertThat(result.spend()).isEqualByComparingTo("12.50");
+                    assertThat(result.purchaseValue()).isZero();
+                    if (field.equals("impressions")) {
+                        assertThat(result.impressions()).isNull();
+                        assertThat(result.clicks()).isEqualTo(2L);
+                    } else {
+                        assertThat(result.clicks()).isNull();
+                        assertThat(result.impressions()).isEqualTo(10L);
+                    }
+                }
+            }
+        }
+        json("{\"data\":[{\"account_id\":\"123\",\"spend\":\"0\"}]}");
+        var result = client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL).get(0);
+        assertThat(result.impressions()).isNull();
+        assertThat(result.clicks()).isNull();
+    }
+
+    @Test
+    void acceptsIntegralDecimalCountsAndKeepsExplicitZeroDistinctFromUnknown() {
+        for (String count : List.of("12", "\"12\"", "12.0", "\"12.000\"", "\"00012\"")) {
+            for (boolean campaignLevel : List.of(false, true)) {
+                json("{\"data\":[" + insight("111", "\"1\"", count, "\"0.00\"") + "]}");
+                var result = (campaignLevel ? client.getCampaignInsights("act_123", TOKEN, SINCE, UNTIL)
+                        : client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL)).get(0);
+                assertThat(result.impressions()).isEqualTo(12L);
+                assertThat(result.clicks()).isZero();
+            }
+        }
+        json("{\"data\":[" + insight("111", "\"1\"", "\"9223372036854775807.0\"", "0") + "]}");
+        assertThat(client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL).get(0).impressions()).isEqualTo(Long.MAX_VALUE);
+        json("{\"data\":[" + insight("111", "\"1\"", "9223372036854775807.0", "0") + "]}");
+        assertThat(client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL).get(0).impressions()).isEqualTo(Long.MAX_VALUE);
+    }
+
+    @Test
+    void malformedInsightCountNamesOnlyTheFieldWithoutRequestingReconnectionOrExposingValues() {
+        json("{\"data\":[" + insight("111", "\"1\"", "\"10\"", "\"" + TOKEN + "\"") + "]}");
+        assertThatThrownBy(() -> client.getAccountInsights("act_123", TOKEN, SINCE, UNTIL))
+                .isInstanceOf(ApiException.class).hasMessageContaining("clicks").hasMessageContaining("다시 조회")
+                .hasMessageNotContaining("다시 연결").hasMessageNotContaining(TOKEN).hasNoCause();
     }
 
     @Test

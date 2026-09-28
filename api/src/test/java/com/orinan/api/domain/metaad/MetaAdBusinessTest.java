@@ -3,11 +3,16 @@ package com.orinan.api.domain.metaad;
 import com.orinan.api.common.code.ApiCode;
 import com.orinan.api.common.exception.ApiException;
 import com.orinan.api.domain.metaad.business.MetaAdBusiness;
+import com.orinan.api.domain.metaad.controller.model.MetaCampaignCreateRequest;
+import com.orinan.api.domain.metaad.controller.model.MetaCampaignCreateRequest.Objective;
+import com.orinan.api.domain.metaad.controller.model.MetaCampaignCreateRequest.SpecialAdCategory;
 import com.orinan.api.domain.metaad.service.MetaAdService;
+import com.orinan.api.domain.metaad.service.MetaAdImageService;
 import com.orinan.api.domain.metaad.service.MetaAdService.SavedAdAccount;
 import com.orinan.api.domain.platformconnection.meta.MetaGraphClient;
 import com.orinan.api.domain.platformconnection.meta.MetaGraphClient.AdAccount;
 import com.orinan.api.domain.platformconnection.meta.MetaGraphClient.Campaign;
+import com.orinan.api.domain.platformconnection.meta.MetaGraphClient.CreatedCampaign;
 import com.orinan.api.domain.platformconnection.meta.MetaGraphClient.Insights;
 import com.orinan.api.domain.user.exception.UserErrorCode;
 import org.junit.jupiter.api.Test;
@@ -28,7 +33,62 @@ class MetaAdBusinessTest {
 
     private final MetaAdService service = mock(MetaAdService.class);
     private final MetaGraphClient client = mock(MetaGraphClient.class);
-    private final MetaAdBusiness business = new MetaAdBusiness(service, client);
+    private final MetaAdBusiness business = new MetaAdBusiness(service, client, mock(MetaAdImageService.class));
+
+    @Test
+    void campaignCreationUsesTheSavedAccountTokenAndReturnsTheCreatedIdWithoutAnotherRead() {
+        var request = new MetaCampaignCreateRequest("신규 캠페인", Objective.OUTCOME_TRAFFIC, List.of(), null);
+        var created = new CreatedCampaign("12345");
+        when(service.getAdAccountForManagement(10L, 30L, 2L)).thenReturn(ACCOUNT);
+        when(client.createCampaign("act_123", "shared-secret-token", "신규 캠페인", "OUTCOME_TRAFFIC", List.of(), List.of()))
+                .thenReturn(created);
+
+        assertThat(business.createCampaign(10L, 30L, 2L, request)).isEqualTo(created);
+
+        var order = inOrder(service, client);
+        order.verify(service).getAdAccountForManagement(10L, 30L, 2L);
+        order.verify(client).createCampaign("act_123", "shared-secret-token", "신규 캠페인", "OUTCOME_TRAFFIC", List.of(), List.of());
+        verifyNoMoreInteractions(service, client);
+    }
+
+    @Test
+    void campaignCreationDeduplicatesSpecialCategoriesAndCountries() {
+        var request = new MetaCampaignCreateRequest("주택 캠페인", Objective.OUTCOME_LEADS,
+                List.of(SpecialAdCategory.HOUSING, SpecialAdCategory.HOUSING, SpecialAdCategory.EMPLOYMENT),
+                List.of("KR", "KR", "US"));
+        when(service.getAdAccountForManagement(10L, 30L, 2L)).thenReturn(ACCOUNT);
+
+        business.createCampaign(10L, 30L, 2L, request);
+
+        verify(client).createCampaign("act_123", "shared-secret-token", "주택 캠페인", "OUTCOME_LEADS",
+                List.of("HOUSING", "EMPLOYMENT"), List.of("KR", "US"));
+    }
+
+    @Test
+    void deniedCampaignManagementNeverWritesToMeta() {
+        var request = new MetaCampaignCreateRequest("신규 캠페인", Objective.OUTCOME_TRAFFIC, List.of(), null);
+        var failure = new ApiException(UserErrorCode.USER_PERMISSION_DENY);
+        when(service.getAdAccountForManagement(10L, 30L, 2L)).thenThrow(failure);
+
+        assertThatThrownBy(() -> business.createCampaign(10L, 30L, 2L, request)).isSameAs(failure);
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void campaignCreationDoesNotRetryAnUpstreamFailureOrPerformFollowupReads() {
+        var request = new MetaCampaignCreateRequest("신규 캠페인", Objective.OUTCOME_TRAFFIC, List.of(), null);
+        var failure = new ApiException(ApiCode.SERVER_ERROR, "Meta 응답 확인 실패");
+        when(service.getAdAccountForManagement(10L, 30L, 2L)).thenReturn(ACCOUNT);
+        when(client.createCampaign("act_123", "shared-secret-token", "신규 캠페인", "OUTCOME_TRAFFIC", List.of(), List.of()))
+                .thenThrow(failure);
+
+        assertThatThrownBy(() -> business.createCampaign(10L, 30L, 2L, request)).isSameAs(failure);
+
+        verify(service).getAdAccountForManagement(10L, 30L, 2L);
+        verify(client).createCampaign("act_123", "shared-secret-token", "신규 캠페인", "OUTCOME_TRAFFIC", List.of(), List.of());
+        verifyNoMoreInteractions(service, client);
+    }
 
     @Test
     void campaignsUseTheSavedAccountAndRecheckAuthorizationAfterRemoteRead() {
@@ -307,6 +367,127 @@ class MetaAdBusinessTest {
         assertThatThrownBy(() -> business.getWorkspacePerformance(10L, 2L, SINCE, UNTIL))
                 .isInstanceOfSatisfying(ApiException.class, exception ->
                         assertThat(exception.getCodeIfs()).isEqualTo(ApiCode.SERVER_ERROR));
+    }
+
+    @Test
+    void missingAccountImpressionsAndCampaignClicksPreserveIndependentMetricsAndPurchaseResults() {
+        when(service.getAdAccount(10L, 30L, 2L)).thenReturn(ACCOUNT);
+        stubNullableAccount(ACCOUNT, "USD", "100", null, 10L, "350");
+        when(client.getCampaignInsights(ACCOUNT.externalId(), ACCOUNT.accessToken(), SINCE, UNTIL)).thenReturn(
+                List.of(new Insights("1234", "일부 수치 미제공", new BigDecimal("40"), 200L, null, new BigDecimal("120"))));
+
+        var response = business.getAccountPerformance(10L, 30L, 2L, SINCE, UNTIL);
+
+        var account = response.account();
+        assertThat(account.metrics().impressions()).isNull();
+        assertThat(account.metrics().clicks()).isEqualTo(10L);
+        assertThat(account.metrics().ctr()).isNull();
+        assertThat(account.metrics().cpm()).isNull();
+        assertThat(account.metrics().cpc()).isEqualByComparingTo("10");
+        assertThat(account.metrics().spend()).isEqualByComparingTo("100");
+        assertThat(account.metrics().purchaseValue()).isEqualByComparingTo("350");
+        assertThat(account.metrics().roas()).isEqualByComparingTo("3.5");
+        assertThat(account.dailyAverage().impressions()).isNull();
+        assertThat(account.dailyAverage().clicks()).isEqualByComparingTo("5");
+        assertThat(account.dailyAverage().spend()).isEqualByComparingTo("50");
+        assertThat(response.campaigns()).singleElement().satisfies(campaign -> {
+            assertThat(campaign.metrics().impressions()).isEqualTo(200L);
+            assertThat(campaign.metrics().clicks()).isNull();
+            assertThat(campaign.metrics().ctr()).isNull();
+            assertThat(campaign.metrics().cpc()).isNull();
+            assertThat(campaign.metrics().cpm()).isEqualByComparingTo("200");
+            assertThat(campaign.metrics().roas()).isEqualByComparingTo("3");
+            assertThat(campaign.dailyAverage().impressions()).isEqualByComparingTo("100");
+            assertThat(campaign.dailyAverage().clicks()).isNull();
+        });
+        verify(service).verifyUnchanged(10L, 2L, List.of(ACCOUNT));
+    }
+
+    @Test
+    void missingCountsInvalidateOnlyTheirCurrencyTotalAndDependentRatios() {
+        var second = new SavedAdAccount(31L, 21L, "act_456", "두 번째 계정", "second-token");
+        var third = new SavedAdAccount(32L, 22L, "act_789", "원화 계정", "third-token");
+        when(service.getAdAccounts(10L, 2L)).thenReturn(List.of(ACCOUNT, second, third));
+        stubNullableAccount(ACCOUNT, "USD", "40", null, 10L, "120");
+        stubNullableAccount(second, "USD", "60", 500L, 20L, "180");
+        stubNullableAccount(third, "KRW", "20000", 100L, null, "70000");
+
+        var response = business.getWorkspacePerformance(10L, 2L, SINCE, UNTIL);
+
+        var usd = response.totalsByCurrency().stream().filter(group -> "USD".equals(group.currency())).findFirst().orElseThrow();
+        assertThat(usd.metrics().impressions()).isNull();
+        assertThat(usd.metrics().clicks()).isEqualTo(30L);
+        assertThat(usd.metrics().ctr()).isNull();
+        assertThat(usd.metrics().cpm()).isNull();
+        assertThat(usd.metrics().cpc()).isEqualByComparingTo("3.333333");
+        assertThat(usd.metrics().spend()).isEqualByComparingTo("100");
+        assertThat(usd.metrics().purchaseValue()).isEqualByComparingTo("300");
+        assertThat(usd.metrics().roas()).isEqualByComparingTo("3");
+        assertThat(usd.dailyAverage().impressions()).isNull();
+        assertThat(usd.dailyAverage().clicks()).isEqualByComparingTo("15");
+        var krw = response.totalsByCurrency().stream().filter(group -> "KRW".equals(group.currency())).findFirst().orElseThrow();
+        assertThat(krw.metrics().impressions()).isEqualTo(100L);
+        assertThat(krw.metrics().clicks()).isNull();
+        assertThat(krw.metrics().ctr()).isNull();
+        assertThat(krw.metrics().cpc()).isNull();
+        assertThat(krw.metrics().cpm()).isEqualByComparingTo("200000");
+        assertThat(krw.metrics().roas()).isEqualByComparingTo("3.5");
+        assertThat(krw.dailyAverage().impressions()).isEqualByComparingTo("50");
+        assertThat(krw.dailyAverage().clicks()).isNull();
+    }
+
+    @Test
+    void emptyInsightsRemainZeroButAnExistingRowWithMissingCountsIsNotNoDelivery() {
+        var second = new SavedAdAccount(31L, 21L, "act_456", "수치 미제공 계정", "second-token");
+        when(service.getAdAccounts(10L, 2L)).thenReturn(List.of(ACCOUNT, second));
+        stubAccount(ACCOUNT, "USD", "0", 0, 0);
+        when(client.getAccountInsights(ACCOUNT.externalId(), ACCOUNT.accessToken(), SINCE, UNTIL)).thenReturn(List.of());
+        stubNullableAccount(second, "USD", "0", null, null, "0");
+
+        var response = business.getWorkspacePerformance(10L, 2L, SINCE, UNTIL);
+
+        assertThat(response.accounts().get(0).metrics().impressions()).isZero();
+        assertThat(response.accounts().get(0).metrics().clicks()).isZero();
+        assertThat(response.accounts().get(0).dailyAverage().impressions()).isZero();
+        assertThat(response.accounts().get(1).metrics().impressions()).isNull();
+        assertThat(response.accounts().get(1).metrics().clicks()).isNull();
+        assertThat(response.accounts().get(1).dailyAverage().impressions()).isNull();
+        var total = response.totalsByCurrency().get(0);
+        assertThat(total.metrics().spend()).isZero();
+        assertThat(total.metrics().impressions()).isNull();
+        assertThat(total.metrics().clicks()).isNull();
+        assertThat(total.metrics().ctr()).isNull();
+        assertThat(total.metrics().cpc()).isNull();
+        assertThat(total.metrics().cpm()).isNull();
+        assertThat(total.metrics().roas()).isNull();
+        assertThat(total.dailyAverage().impressions()).isNull();
+        assertThat(total.dailyAverage().clicks()).isNull();
+    }
+
+    @Test
+    void unknownTotalDoesNotOverflowWhileAddingAnIncompleteSubsetInAnotherOrder() {
+        var second = new SavedAdAccount(31L, 21L, "act_456", "두 번째 계정", "second-token");
+        var third = new SavedAdAccount(32L, 22L, "act_789", "수치 미제공 계정", "third-token");
+        stubNullableAccount(ACCOUNT, "USD", "10", Long.MAX_VALUE, 10L, "30");
+        stubNullableAccount(second, "USD", "20", 1L, 20L, "60");
+        stubNullableAccount(third, "USD", "30", null, 30L, "90");
+
+        for (var accounts : List.of(List.of(ACCOUNT, second, third), List.of(third, second, ACCOUNT))) {
+            when(service.getAdAccounts(10L, 2L)).thenReturn(accounts);
+            var total = business.getWorkspacePerformance(10L, 2L, SINCE, UNTIL).totalsByCurrency().get(0).metrics();
+            assertThat(total.impressions()).isNull();
+            assertThat(total.clicks()).isEqualTo(60L);
+            assertThat(total.cpc()).isEqualByComparingTo("1");
+            assertThat(total.roas()).isEqualByComparingTo("3");
+        }
+    }
+
+    private void stubNullableAccount(SavedAdAccount saved, String currency, String spend, Long impressions, Long clicks,
+                                     String purchaseValue) {
+        when(client.getAdAccount(saved.externalId(), saved.accessToken())).thenReturn(
+                new AdAccount(saved.externalId(), "현재 Meta 계정 이름", currency, "Asia/Seoul"));
+        when(client.getAccountInsights(saved.externalId(), saved.accessToken(), SINCE, UNTIL)).thenReturn(
+                List.of(new Insights(null, null, new BigDecimal(spend), impressions, clicks, new BigDecimal(purchaseValue))));
     }
 
     private void stubAccount(SavedAdAccount saved, String currency, String spend, long impressions, long clicks) {

@@ -35,6 +35,14 @@ token:
   refresh-token:
     plus-hour: 12
 
+# 기존 서버 앱 설정을 커머스ID 인증·토큰 발급에 사용합니다.
+# naver.solution.client-id/client-secret을 명시하면 해당 값이 우선합니다.
+# 앱 키만으로 솔루션 등록·팝업 인증 설정을 대신하거나 기능을 활성화하지 않습니다.
+naver:
+  solution:
+    client-id: ${app.naver-commerce.app-id:}
+    client-secret: ${app.naver-commerce.app-secret:}
+
 # OAuth 토큰 교환 정보가 HTTP 클라이언트 로그에 남지 않도록 합니다.
 logging:
   level:

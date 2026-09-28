@@ -15,6 +15,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.cfg.JsonNodeFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 import javax.crypto.Mac;
@@ -51,7 +52,9 @@ public class MetaGraphClient {
     public MetaGraphClient(WebClient.Builder builder, MetaProperties properties, JsonMapper jsonMapper) {
         this.webClient = builder.clone().build();
         this.properties = properties;
-        this.jsonMapper = jsonMapper;
+        // Preserve raw decimal precision before validating count values with longValueExact().
+        this.jsonMapper = jsonMapper.rebuild().enable(JsonNodeFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+                .disable(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES).build();
     }
 
     public String authorizationUrl(String state) {
@@ -147,6 +150,20 @@ public class MetaGraphClient {
         return new AdAccount(id, requiredText(account, "name"), currency, requiredText(account, "timezone_name"));
     }
 
+    public List<DiscoveredAsset> listPromotablePages(String adAccountId, String accessToken) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        Map<String, DiscoveredAsset> pages = new LinkedHashMap<>();
+        for (JsonNode page : readEdge(adAccountId + "/promote_pages", "id,name", accessToken)) {
+            String pageId = requiredText(page, "id");
+            if (!validNodeId(pageId)) {
+                throw invalidResponse();
+            }
+            pages.putIfAbsent(pageId, new DiscoveredAsset(pageId, optionalText(page, "name", pageId),
+                    PlatformType.FACEBOOK, AssetType.PAGE, pageId));
+        }
+        return List.copyOf(pages.values());
+    }
+
     public List<Campaign> listCampaigns(String adAccountId, String accessToken) {
         validateAdAccountRequest(adAccountId, accessToken);
         List<Campaign> campaigns = new ArrayList<>();
@@ -162,6 +179,309 @@ public class MetaGraphClient {
                     requiredText(campaign, "effective_status"), requiredText(campaign, "objective")));
         }
         return List.copyOf(campaigns);
+    }
+
+    public CreatedCampaign createCampaign(String adAccountId, String accessToken, String name, String objective,
+                                           List<String> specialAdCategories, List<String> specialAdCategoryCountry) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        if (!StringUtils.hasText(name) || name.length() > 255
+                || objective == null || !Set.of("OUTCOME_AWARENESS", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT",
+                "OUTCOME_LEADS", "OUTCOME_APP_PROMOTION", "OUTCOME_SALES").contains(objective)
+                || specialAdCategories == null || specialAdCategoryCountry == null) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "캠페인 이름과 목표, 특별 광고 카테고리를 확인해 주세요.");
+        }
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("name", name);
+        form.add("objective", objective);
+        form.add("special_ad_categories", jsonMapper.writeValueAsString(specialAdCategories));
+        if (!specialAdCategoryCountry.isEmpty()) {
+            form.add("special_ad_category_country", jsonMapper.writeValueAsString(specialAdCategoryCountry));
+        }
+        form.add("status", "PAUSED");
+        form.add("buying_type", "AUCTION");
+        form.add("is_adset_budget_sharing_enabled", "false");
+        return new CreatedCampaign(postCreation(adAccountId, accessToken, "campaigns", form,
+                "Meta 캠페인 생성 결과를 확인하지 못했습니다. 중복 생성을 피하려면 캠페인 목록을 먼저 확인해 주세요."));
+    }
+
+    public CreatedAdSet createAdSet(String adAccountId, String accessToken, String campaignId, AdSetSpec spec) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(campaignId);
+        if (spec == null || !validName(spec.name()) || spec.objective() == null
+                || !Set.of("OUTCOME_TRAFFIC", "OUTCOME_SALES").contains(spec.objective())
+                || spec.dailyBudget() <= 0 || spec.countries() == null || spec.countries().isEmpty()
+                || spec.countries().size() > 250
+                || spec.countries().stream().anyMatch(country -> country == null || !country.matches("[A-Z]{2}"))
+                || spec.ageMin() < 18 || spec.ageMax() > 65 || spec.ageMin() > spec.ageMax()
+                || ("OUTCOME_SALES".equals(spec.objective()) && !validNodeId(spec.pixelId()))
+                || ("OUTCOME_TRAFFIC".equals(spec.objective()) && spec.pixelId() != null)) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "광고 세트의 목표, 예산, 타겟 및 픽셀 정보를 확인해 주세요.");
+        }
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("name", spec.name());
+        form.add("campaign_id", campaignId);
+        form.add("daily_budget", Long.toString(spec.dailyBudget()));
+        form.add("billing_event", "IMPRESSIONS");
+        form.add("bid_strategy", "LOWEST_COST_WITHOUT_CAP");
+        form.add("optimization_goal", "OUTCOME_SALES".equals(spec.objective()) ? "OFFSITE_CONVERSIONS" : "LINK_CLICKS");
+        form.add("destination_type", "WEBSITE");
+        form.add("status", "PAUSED");
+        Map<String, Object> targeting = new LinkedHashMap<>();
+        targeting.put("geo_locations", Map.of("countries", spec.countries().stream().distinct().toList()));
+        targeting.put("age_min", spec.ageMin());
+        targeting.put("age_max", spec.ageMax());
+        targeting.put("targeting_automation", Map.of("advantage_audience", 0));
+        targeting.put("publisher_platforms", spec.instagramEnabled() ? List.of("facebook", "instagram") : List.of("facebook"));
+        targeting.put("facebook_positions", List.of("feed"));
+        if (spec.instagramEnabled()) {
+            targeting.put("instagram_positions", List.of("stream"));
+        }
+        form.add("targeting", jsonMapper.writeValueAsString(targeting));
+        if ("OUTCOME_SALES".equals(spec.objective())) {
+            form.add("promoted_object", jsonMapper.writeValueAsString(Map.of("pixel_id", spec.pixelId(), "custom_event_type", "PURCHASE")));
+        }
+        return new CreatedAdSet(postCreation(adAccountId, accessToken, "adsets", form, unknownCreationMessage("광고 세트")));
+    }
+
+    public CreatedCreative createImageCreative(String adAccountId, String accessToken, CreativeSpec spec) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        if (spec == null || !validName(spec.name()) || !validNodeId(spec.pageId())
+                || (spec.instagramUserId() != null && !validNodeId(spec.instagramUserId()))
+                || !validHttpsUrl(spec.linkUrl()) || !validHttpsUrl(spec.imageUrl())
+                || !StringUtils.hasText(spec.message()) || spec.message().length() > 5000
+                || !validName(spec.headline()) || (spec.description() != null && spec.description().length() > 500)
+                || spec.callToAction() == null
+                || !Set.of("LEARN_MORE", "SHOP_NOW", "SIGN_UP", "CONTACT_US", "BOOK_TRAVEL", "DOWNLOAD",
+                "GET_QUOTE", "APPLY_NOW", "GET_OFFER").contains(spec.callToAction())) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "광고 이미지, 문구, 링크 및 페이지 정보를 확인해 주세요.");
+        }
+        Map<String, Object> linkData = new LinkedHashMap<>();
+        linkData.put("link", spec.linkUrl());
+        // Meta fetches this public image URL; the application never fetches user-supplied URLs.
+        linkData.put("picture", spec.imageUrl());
+        linkData.put("message", spec.message());
+        linkData.put("name", spec.headline());
+        if (StringUtils.hasText(spec.description())) {
+            linkData.put("description", spec.description());
+        }
+        linkData.put("call_to_action", Map.of("type", spec.callToAction(), "value", Map.of("link", spec.linkUrl())));
+        Map<String, Object> story = new LinkedHashMap<>();
+        story.put("page_id", spec.pageId());
+        story.put("link_data", linkData);
+        if (spec.instagramUserId() != null) {
+            story.put("instagram_user_id", spec.instagramUserId());
+        }
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("name", spec.name());
+        form.add("object_story_spec", jsonMapper.writeValueAsString(story));
+        return new CreatedCreative(postCreation(adAccountId, accessToken, "adcreatives", form, unknownCreationMessage("광고 소재")));
+    }
+
+    public CreatedAd createAd(String adAccountId, String accessToken, String name, String adSetId, String creativeId) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(adSetId);
+        requireNodeId(creativeId);
+        if (!validName(name)) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "광고 이름을 확인해 주세요.");
+        }
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("name", name);
+        form.add("adset_id", adSetId);
+        form.add("creative", jsonMapper.writeValueAsString(Map.of("creative_id", creativeId)));
+        form.add("status", "PAUSED");
+        return new CreatedAd(postCreation(adAccountId, accessToken, "ads", form, unknownCreationMessage("광고")));
+    }
+
+    public CampaignForUpdate getCampaignForUpdate(String adAccountId, String accessToken, String campaignId) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(campaignId);
+        JsonNode campaign = get(campaignId, "id,account_id,objective,daily_budget,lifetime_budget", accessToken, null);
+        requireUpdateIdentity(campaign, adAccountId, campaignId);
+        requiredText(campaign, "objective");
+        return new CampaignForUpdate(campaignId, optionalBudget(campaign, "daily_budget"),
+                optionalBudget(campaign, "lifetime_budget"));
+    }
+
+    public AdSetForUpdate getAdSetForUpdate(String adAccountId, String accessToken, String adSetId) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(adSetId);
+        JsonNode adSet = get(adSetId, "id,account_id,campaign_id,daily_budget,lifetime_budget", accessToken, null);
+        requireUpdateIdentity(adSet, adAccountId, adSetId);
+        String campaignId = requiredText(adSet, "campaign_id");
+        if (!validNodeId(campaignId)) {
+            throw invalidResponse();
+        }
+        return new AdSetForUpdate(adSetId, campaignId, optionalBudget(adSet, "daily_budget"),
+                optionalBudget(adSet, "lifetime_budget"));
+    }
+
+    public void verifyAdForUpdate(String adAccountId, String accessToken, String adId) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(adId);
+        JsonNode ad = get(adId, "id,account_id,adset_id,campaign_id", accessToken, null);
+        requireUpdateIdentity(ad, adAccountId, adId);
+        if (!validNodeId(requiredText(ad, "adset_id")) || !validNodeId(requiredText(ad, "campaign_id"))) {
+            throw invalidResponse();
+        }
+    }
+
+    public UpdatedAdObject updateCampaign(String adAccountId, String accessToken, String campaignId,
+                                           String name, String status, Long dailyBudget) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(campaignId);
+        return postUpdate(campaignId, accessToken, updateForm(name, status, dailyBudget));
+    }
+
+    public UpdatedAdObject updateAdSet(String adAccountId, String accessToken, String adSetId,
+                                        String name, String status, Long dailyBudget) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(adSetId);
+        return postUpdate(adSetId, accessToken, updateForm(name, status, dailyBudget));
+    }
+
+    public UpdatedAdObject updateAd(String adAccountId, String accessToken, String adId, String name, String status) {
+        validateAdAccountRequest(adAccountId, accessToken);
+        requireNodeId(adId);
+        return postUpdate(adId, accessToken, updateForm(name, status, null));
+    }
+
+    private void requireUpdateIdentity(JsonNode object, String adAccountId, String objectId) {
+        requireAccountId(object, adAccountId);
+        if (!objectId.equals(requiredText(object, "id"))) {
+            throw invalidResponse();
+        }
+    }
+
+    private long optionalBudget(JsonNode object, String field) {
+        return object.path(field).isMissingNode() || object.path(field).isNull() ? 0 : nonNegativeLong(object, field);
+    }
+
+    private MultiValueMap<String, String> updateForm(String name, String status, Long dailyBudget) {
+        if ((name == null && status == null && dailyBudget == null)
+                || (name != null && !validName(name))
+                || (status != null && !Set.of("ACTIVE", "PAUSED").contains(status))
+                || (dailyBudget != null && dailyBudget <= 0)) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "수정할 광고 이름, 상태 또는 일 예산을 확인해 주세요.");
+        }
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        if (name != null) {
+            form.add("name", name);
+        }
+        if (status != null) {
+            form.add("status", status);
+        }
+        if (dailyBudget != null) {
+            form.add("daily_budget", Long.toString(dailyBudget));
+        }
+        return form;
+    }
+
+    private UpdatedAdObject postUpdate(String objectId, String accessToken, MultiValueMap<String, String> form) {
+        String uncertainMessage = "수정 결과를 확인하지 못했습니다. Meta 광고 관리자에서 현재 상태와 예산을 확인해 주세요.";
+        String rejectionMessage = "Meta 광고 수정 요청이 거절되었습니다. 계정 권한과 입력 정보를 확인해 주세요.";
+        form.add("appsecret_proof", appSecretProof(accessToken));
+        URI uri = UriComponentsBuilder.fromUriString(GRAPH_URL)
+                .pathSegment(properties.getApiVersion(), objectId).build().toUri();
+        try {
+            JsonNode response = webClient.post().uri(uri)
+                    .headers(headers -> headers.setBearerAuth(accessToken))
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(BodyInserters.fromFormData(form))
+                    .exchangeToMono(result -> {
+                        if (!result.statusCode().is2xxSuccessful()) {
+                            boolean rejected = result.statusCode().is4xxClientError() && result.statusCode().value() != 408;
+                            ApiCode code = rejected && result.statusCode().value() != 429
+                                    ? ApiCode.BAD_REQUEST : ApiCode.SERVER_ERROR;
+                            return result.releaseBody().then(Mono.error(new ApiException(code,
+                                    rejected ? rejectionMessage : uncertainMessage)));
+                        }
+                        return result.bodyToMono(byte[].class).map(jsonMapper::readTree);
+                    }).block(REQUEST_TIMEOUT);
+            if (response != null && response.isObject()
+                    && (response.has("error") || (response.path("success").isBoolean() && !response.path("success").asBoolean()))) {
+                throw new ApiException(ApiCode.BAD_REQUEST, rejectionMessage);
+            }
+            if (response == null || !response.isObject() || !response.path("success").isBoolean()
+                    || !response.path("success").asBoolean()) {
+                throw new ApiException(ApiCode.SERVER_ERROR, uncertainMessage);
+            }
+            return new UpdatedAdObject(objectId, true);
+        } catch (ApiException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            // A failed transport or malformed acknowledgement can follow a completed write. Never retry it.
+            throw new ApiException(ApiCode.SERVER_ERROR, uncertainMessage);
+        }
+    }
+
+    private String postCreation(String adAccountId, String accessToken, String edge,
+                                MultiValueMap<String, String> form, String uncertainMessage) {
+        form.add("appsecret_proof", appSecretProof(accessToken));
+        URI uri = UriComponentsBuilder.fromUriString(GRAPH_URL)
+                .pathSegment(properties.getApiVersion(), adAccountId, edge).build().toUri();
+        try {
+            JsonNode response = webClient.post().uri(uri)
+                    .headers(headers -> headers.setBearerAuth(accessToken))
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(BodyInserters.fromFormData(form))
+                    .exchangeToMono(result -> {
+                        if (!result.statusCode().is2xxSuccessful()) {
+                            boolean unknown = !result.statusCode().is4xxClientError() || result.statusCode().value() == 408;
+                            ApiCode code = !unknown && result.statusCode().is4xxClientError() && result.statusCode().value() != 429
+                                    ? ApiCode.BAD_REQUEST : ApiCode.SERVER_ERROR;
+                            return result.releaseBody().then(Mono.error(new CreationException(code,
+                                    unknown ? uncertainMessage : "Meta 광고 등록 요청이 거절되었습니다. 계정 권한과 입력 정보를 확인해 주세요.", unknown)));
+                        }
+                        return result.bodyToMono(byte[].class).map(jsonMapper::readTree);
+                    }).block(REQUEST_TIMEOUT);
+            if (response != null && response.isObject() && response.has("error")) {
+                throw new CreationException(ApiCode.BAD_REQUEST,
+                        "Meta 광고 등록 요청이 거절되었습니다. 계정 권한과 입력 정보를 확인해 주세요.", false);
+            }
+            if (response == null || !response.isObject()) {
+                throw new CreationException(ApiCode.SERVER_ERROR, uncertainMessage, true);
+            }
+            String id = requiredText(response, "id");
+            if (!id.matches("[0-9]{1,32}")) {
+                throw new CreationException(ApiCode.SERVER_ERROR, uncertainMessage, true);
+            }
+            return id;
+        } catch (CreationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            // A failed transport or malformed success may follow a completed write. Never retry or expose upstream data.
+            throw new CreationException(ApiCode.SERVER_ERROR, uncertainMessage, true);
+        }
+    }
+
+    private String unknownCreationMessage(String objectName) {
+        return "Meta " + objectName + " 생성 결과를 확인하지 못했습니다. 중복 생성을 피하려면 Meta 광고 관리자에서 먼저 확인해 주세요.";
+    }
+
+    private boolean validName(String value) {
+        return StringUtils.hasText(value) && value.length() <= 255;
+    }
+
+    private boolean validNodeId(String value) {
+        return value != null && value.matches("[0-9]{1,32}");
+    }
+
+    private void requireNodeId(String value) {
+        if (!validNodeId(value)) {
+            throw new ApiException(ApiCode.BAD_REQUEST, "Meta 광고 객체 ID를 확인해 주세요.");
+        }
+    }
+
+    private boolean validHttpsUrl(String value) {
+        if (!StringUtils.hasText(value) || value.length() > 2048) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(value);
+            return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null && uri.getUserInfo() == null;
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
     }
 
     public List<Insights> getCampaignInsights(String adAccountId, String accessToken, LocalDate since, LocalDate until) {
@@ -192,7 +512,7 @@ public class MetaGraphClient {
                 throw invalidResponse();
             }
             insights.add(new Insights(campaignId, campaignLevel ? requiredText(row, "campaign_name") : null,
-                    nonNegativeDecimal(row, "spend"), nonNegativeLong(row, "impressions"), nonNegativeLong(row, "clicks"),
+                    nonNegativeDecimal(row, "spend"), insightCount(row, "impressions"), insightCount(row, "clicks"),
                     purchaseValue(row)));
         }
         return List.copyOf(insights);
@@ -259,6 +579,25 @@ public class MetaGraphClient {
         } catch (NumberFormatException exception) {
             throw invalidResponse();
         }
+    }
+
+    private Long insightCount(JsonNode row, String field) {
+        JsonNode value = row.path(field);
+        // Insights can omit a metric. Unknown counts must not become zero or invalidate known spend/ROAS.
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        String text = value.isString() ? value.asString() : value.isNumber() ? value.toString() : "";
+        if (text.length() <= 64 && text.matches("[0-9]+(?:\\.[0-9]+)?")) {
+            try {
+                // Accept mathematically integral values such as "12.0" without truncating fractional counts.
+                return new BigDecimal(text).longValueExact();
+            } catch (ArithmeticException exception) {
+                // Keep the response and its value out of exceptions and logs.
+            }
+        }
+        throw new ApiException(ApiCode.SERVER_ERROR,
+                "Meta 성과의 " + field + " 값을 확인할 수 없습니다. 잠시 후 다시 조회해 주세요.");
     }
 
     private MultiValueMap<String, String> credentials() {
@@ -352,7 +691,8 @@ public class MetaGraphClient {
             builder.queryParam("fields", "{fields}");
             variables.put("fields", fields);
         }
-        if (path.startsWith("me/") || path.endsWith("/campaigns") || path.endsWith("/insights")) {
+        if (path.startsWith("me/") || path.endsWith("/campaigns") || path.endsWith("/insights")
+                || path.endsWith("/promote_pages")) {
             builder.queryParam("limit", 100);
         }
         if (after != null) {
@@ -419,10 +759,56 @@ public class MetaGraphClient {
     public record Campaign(String id, String name, String status, String effectiveStatus, String objective) {
     }
 
+    public record CreatedCampaign(String id) {
+    }
+
+    public record AdSetSpec(String name, String objective, long dailyBudget, List<String> countries,
+                            int ageMin, int ageMax, String pixelId, boolean instagramEnabled) {
+    }
+
+    public record CreativeSpec(String name, String pageId, String instagramUserId, String linkUrl, String imageUrl,
+                               String message, String headline, String description, String callToAction) {
+    }
+
+    public record CreatedAdSet(String id) {
+    }
+
+    public record CreatedCreative(String id) {
+    }
+
+    public record CreatedAd(String id) {
+    }
+
+    public record CampaignForUpdate(String id, long dailyBudget, long lifetimeBudget) {
+    }
+
+    public record AdSetForUpdate(String id, String campaignId, long dailyBudget, long lifetimeBudget) {
+    }
+
+    public record UpdatedAdObject(String id, boolean success) {
+    }
+
+    public static class CreationException extends ApiException {
+        private final boolean outcomeUnknown;
+
+        public CreationException(ApiCode code, String message, boolean outcomeUnknown) {
+            super(code, message);
+            this.outcomeUnknown = outcomeUnknown;
+        }
+
+        public boolean isOutcomeUnknown() {
+            return outcomeUnknown;
+        }
+    }
+
     public record AdAccount(String id, String name, String currency, String timezoneName) {
     }
 
-    public record Insights(String campaignId, String campaignName, BigDecimal spend, long impressions, long clicks,
+    public record Insights(String campaignId, String campaignName, BigDecimal spend, Long impressions, Long clicks,
                            BigDecimal purchaseValue) {
+        public Insights(String campaignId, String campaignName, BigDecimal spend, long impressions, long clicks,
+                        BigDecimal purchaseValue) {
+            this(campaignId, campaignName, spend, Long.valueOf(impressions), Long.valueOf(clicks), purchaseValue);
+        }
     }
 }

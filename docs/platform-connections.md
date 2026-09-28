@@ -1,6 +1,6 @@
 # 플랫폼 연결
 
-현재 Meta OAuth와 네이버 스마트스토어 연결을 지원한다. 아래는 Meta의 광고 계정·Facebook 페이지·연결된 Instagram 프로필 조회 및 자산 선택 방법이다. 네이버 인증·채널 조회·선택·토큰 갱신은 [네이버 연결 문서](naver-connections.md)를 참고한다. 광고 생성·집행, 게시물 발행, Threads·쿠팡 연결은 후속 구현 범위다.
+현재 Meta OAuth와 네이버 스마트스토어 연결을 지원한다. 아래는 Meta의 광고 계정·Facebook 페이지·연결된 Instagram 프로필 조회 및 자산 선택 방법이다. 네이버 인증·채널 조회·선택·토큰 갱신은 [네이버 연결 문서](naver-connections.md)를 참고한다. 선택한 자산으로 캠페인·광고세트·이미지 광고를 등록하는 방법은 [메타 광고 생성 문서](meta-ad-creation.md)에 정리했다. 광고 활성화, 게시물 발행, Threads·쿠팡 연결은 후속 구현 범위다.
 
 선택한 Meta 광고 계정의 캠페인·계정별 성과와 워크스페이스 전체 합계·일평균 조회는 [메타 광고 성과 문서](meta-ad-performance.md)를 참고한다.
 
@@ -61,6 +61,8 @@ Meta 앱은 Facebook Login과 Marketing API를 사용한다. 요청 권한은 `a
 | GET | `/api/workspaces/{workspaceId}/connections` | 연결 목록 및 이미 저장한 자산 조회 |
 | GET | `/api/workspaces/{workspaceId}/connections/{connectionId}/meta/assets` | 현재 Meta에서 접근 가능한 자산 전체 조회 |
 | POST | `/api/workspaces/{workspaceId}/connections/{connectionId}/meta/assets` | 선택한 자산 추가·갱신. 최대 100개, 기존 선택은 유지 |
+| GET | `/api/workspaces/{workspaceId}/meta/ad-accounts/{assetId}/pages` | 저장된 광고 계정의 `promote_pages`로 사용 가능한 Facebook 페이지 조회 |
+| POST | `/api/workspaces/{workspaceId}/meta/ad-accounts/{assetId}/pages` | 해당 광고 계정에서 사용 가능한 페이지를 같은 Meta 연결에 추가·갱신 |
 
 ### 연결 흐름
 
@@ -87,12 +89,17 @@ window.location.assign(body.authorization_url);
 {
   "assets": [
     { "external_id": "act_123456", "platform_type": "FACEBOOK", "asset_type": "AD_ACCOUNT" },
+    { "external_id": "123456789012345", "platform_type": "FACEBOOK", "asset_type": "PAGE" },
     { "external_id": "17841400000000000", "platform_type": "INSTAGRAM", "asset_type": "PROFILE" }
   ]
 }
 ```
 
 자산 ID는 조회 결과를 그대로 사용한다. 광고 계정은 Meta가 반환한 `act_...` 형식을 유지한다. 저장 직전에 Meta에서 접근 가능한 목록을 다시 조회하며, 이름과 페이지 연결 정보는 서버 응답으로 채운다. 요청 중 하나라도 접근할 수 없는 자산이면 전체 선택을 저장하지 않는다. 같은 자산을 다시 선택하면 기존 행을 갱신한다. 조회 도중 재인증으로 토큰이 변경되면 다시 조회하도록 요청한다.
+
+광고 등록에는 광고 계정과 같은 Meta 연결에 저장되어 있고, 해당 광고 계정의 현재 `promote_pages` 목록에 있는 Facebook 페이지가 필요하다. 일반 자산 조회의 `/me/accounts`는 로그인 사용자가 관리하는 페이지 목록이므로 광고 계정별 페이지 선택을 대신하지 않는다. 광고 등록 화면은 광고 계정을 선택한 뒤 위 계정별 페이지 API로 조회하고 `{ "external_id": "페이지 숫자 ID" }`를 POST하여 페이지를 저장한다. 저장 시 계정별 목록을 다시 검증하며 기존 자산을 유지한다. 응답은 해당 연결의 저장된 전체 자산 배열이다. 자세한 계약은 [메타 광고 생성 문서](meta-ad-creation.md#광고-계정별-페이지-조회저장)를 참고한다.
+
+Instagram 게재 시에는 선택한 페이지의 `external_id`와 프로필의 `facebook_page_id`가 일치해야 한다. 자산 선택·페이지 저장 요청에는 `external_id`를 사용하고, 광고 등록 요청의 `assetId`·`page_asset_id`·`instagram_asset_id`에는 저장 응답의 내부 `id`를 사용한다.
 
 만료된 토큰이나 확장 정보가 없는 기존 Meta 연결은 목록에서 `requires_reauth: true`로 표시된다. 토큰을 자동 연장하는 작업은 없으며, 같은 계정으로 연결 시작 API를 다시 호출해 갱신한다. 저장된 자산은 선택 이력이므로 향후 광고 실행 시에는 Meta의 현재 권한을 다시 확인해야 한다.
 
