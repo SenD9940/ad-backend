@@ -17,6 +17,8 @@ import com.orinan.db.metaasset.MetaAssetRepository;
 import com.orinan.db.metaconnection.MetaConnectionEntity;
 import com.orinan.db.metaconnection.MetaConnectionRepository;
 import com.orinan.db.naverconnection.NaverConnectionRepository;
+import com.orinan.db.imwebconnection.ImwebConnectionRepository;
+import com.orinan.api.domain.imweb.client.ImwebProperties;
 import com.orinan.db.naverconnection.enums.NaverCredentialSource;
 import com.orinan.db.platformasset.PlatformAssetEntity;
 import com.orinan.db.platformasset.PlatformAssetRepository;
@@ -50,6 +52,14 @@ public class PlatformConnectionService {
     private final EntityManager entityManager;
     private final NaverConnectionRepository naverConnections;
     private NaverSolutionCredentialResolver solutionCredentials;
+    private ImwebConnectionRepository imwebConnections;
+    private ImwebProperties imwebProperties;
+
+    @Autowired(required = false)
+    public void setImwebConnections(ImwebConnectionRepository repository, ImwebProperties properties) {
+        this.imwebConnections = repository;
+        this.imwebProperties = properties;
+    }
 
     @Autowired(required = false)
     public void setSolutionCredentials(NaverSolutionCredentialResolver solutionCredentials) {
@@ -179,14 +189,19 @@ public class PlatformConnectionService {
                 ? metaConnections.findById(connection.getId()).orElse(null) : null;
         var naver = connection.getProviderType() == ProviderType.NAVER
                 ? naverConnections.findById(connection.getId()).orElse(null) : null;
+        var imweb = connection.getProviderType() == ProviderType.IMWEB && imwebConnections != null
+                ? imwebConnections.findById(connection.getId()).orElse(null) : null;
         boolean requiresReauth = Boolean.TRUE.equals(connection.getRequiresReauth())
                 || (connection.getProviderType() == ProviderType.META && (meta == null || expired(meta)))
                 || (connection.getProviderType() == ProviderType.NAVER && (naver == null
                     || naver.getAccessToken() == null
                     || naver.getCredentialSource() == NaverCredentialSource.SOLUTION
-                        && (solutionCredentials == null || !solutionCredentials.available(naver))));
+                        && (solutionCredentials == null || !solutionCredentials.available(naver))))
+                || (connection.getProviderType() == ProviderType.IMWEB && (imweb == null || imweb.getAccessToken() == null
+                        || imweb.getRefreshToken() == null || imwebProperties == null
+                        || !java.util.Objects.equals(imweb.getClientId(), imwebProperties.getClientId())));
         // Naver client credentials can renew an expired token without another user login.
-        var expiresAt = meta != null ? meta.getExpiresAt() : naver != null ? naver.getExpiresAt() : null;
+        var expiresAt = meta != null ? meta.getExpiresAt() : naver != null ? naver.getExpiresAt() : imweb != null ? imweb.getExpiresAt() : null;
         return new PlatformConnectionResponse(connection.getId(), connection.getWorkspace().getId(),
                 connection.getProviderType(), connection.getExternalAccountId(), connection.getAccountName(),
                 requiresReauth, expiresAt, savedAssets(connection.getId()),

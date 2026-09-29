@@ -56,6 +56,25 @@ class PlatformConnectionServiceTest {
             .user(UserEntity.builder().id(1L).build()).build();
 
     @Test
+    void imwebListingAcceptsRenewableExpiryAndFlagsAppReplacementOrMissingTokens() {
+        var repository = mock(com.orinan.db.imwebconnection.ImwebConnectionRepository.class);
+        var properties = new com.orinan.api.domain.imweb.client.ImwebProperties();
+        properties.setClientId("test-client"); service.setImwebConnections(repository, properties);
+        var connection = connection(); connection.setProviderType(ProviderType.IMWEB);
+        when(workspaceService.findByIdWithThrow(10L)).thenReturn(workspace);
+        when(connections.findAllByWorkspaceIdOrderByIdDesc(10L)).thenReturn(List.of(connection));
+        var expiredAt = SeoulDateTimes.now().minusMinutes(1);
+        var detail = com.orinan.db.imwebconnection.ImwebConnectionEntity.builder().clientId("test-client")
+                .accessToken("access").refreshToken("refresh").expiresAt(expiredAt).build();
+        when(repository.findById(20L)).thenReturn(Optional.of(detail));
+        var response = service.findAll(10L, 1L).get(0);
+        assertThat(response.expiresAt()).isEqualTo(expiredAt); assertThat(response.requiresReauth()).isFalse();
+        detail.setClientId("previous-app"); assertThat(service.findAll(10L, 1L).get(0).requiresReauth()).isTrue();
+        detail.setClientId("test-client"); detail.setRefreshToken(null);
+        assertThat(service.findAll(10L, 1L).get(0).requiresReauth()).isTrue();
+    }
+
+    @Test
     void naverListingShowsRenewableExpiryAndFlagsMissingCredentials() {
         var connection = connection();
         connection.setProviderType(ProviderType.NAVER);

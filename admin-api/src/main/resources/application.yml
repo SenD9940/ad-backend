@@ -24,19 +24,6 @@ server:
     include-message: never
     include-stacktrace: never
 
-app:
-  ai-studio:
-    openai:
-      api-key: ${app.ai-creative.api-key:${OPEN_API_KEY:${OPENAI_API_KEY:}}}
-      text-model: ${OPENAI_TEXT_MODEL:gpt-4o-mini}
-  aws:
-    s3:
-      bucket: ${S3_BUCKET_NAME:}
-      key-prefix: ${S3_KEY_PREFIX:auto-threads}
-  admin:
-    allowed-origins: ${ADMIN_ALLOWED_ORIGINS:}
-    access-token-minutes: ${ADMIN_ACCESS_TOKEN_MINUTES:30}
-
 cloud:
   aws:
     region:

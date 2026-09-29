@@ -4,6 +4,9 @@ import com.orinan.api.common.code.ApiCode;
 import com.orinan.api.common.exception.ApiException;
 import com.orinan.api.common.time.SeoulDateTimes;
 import com.orinan.db.naverconnection.enums.NaverTokenType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.bcrypt.BCrypt;
 import org.springframework.stereotype.Component;
@@ -11,6 +14,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.BodyExtractors;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import tools.jackson.databind.JsonNode;
@@ -30,9 +35,14 @@ import java.util.regex.Pattern;
 @Component
 public class NaverCommerceClient {
 
+    private static final Logger log = LoggerFactory.getLogger(NaverCommerceClient.class);
     private static final String BASE_URL = "https://api.commerce.naver.com/external";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private static final Pattern BCRYPT_SALT = Pattern.compile("\\$2[aby]\\$(\\d{2})\\$[./A-Za-z0-9]{22}");
+    private static final int MAX_ERROR_BODY_BYTES = 16 * 1024;
+    private static final Set<String> ERROR_CODES = Set.of("BAD_REQUEST", "GW.AUTHN", "GW.AUTHZ", "GW.IP_NOT_ALLOWED");
+    private static final List<String> TOKEN_FIELDS = List.of("client_id", "client_secret_sign", "timestamp", "type", "account_id");
+    private static final ErrorDetails UNKNOWN_ERROR = new ErrorDetails("UNKNOWN", List.of());
 
     private final WebClient webClient;
     private final JsonMapper jsonMapper;
@@ -147,13 +157,7 @@ public class NaverCommerceClient {
                     return result.bodyToMono(byte[].class).map(jsonMapper::readTree);
                 }
                 int status = result.statusCode().value();
-                if (status == 401 && !tokenRequest) {
-                    return result.bodyToMono(byte[].class).map(jsonMapper::readTree)
-                            .flatMap(body -> Mono.<JsonNode>error("GW.AUTHN".equals(body.path("code").asString())
-                                    ? new AuthenticationException() : failedRequest(status)))
-                            .switchIfEmpty(Mono.error(failedRequest(status)));
-                }
-                return result.releaseBody().then(Mono.error(failedRequest(status)));
+                return errorDetails(result).flatMap(details -> Mono.error(failedRequest(status, tokenRequest, details)));
             }).block(REQUEST_TIMEOUT);
             if (response == null || response.isNull()) {
                 throw invalidResponse();
@@ -167,12 +171,87 @@ public class NaverCommerceClient {
         }
     }
 
-    private ApiException failedRequest(int status) {
+    private Mono<ErrorDetails> errorDetails(ClientResponse response) {
+        // Bound untrusted error bodies before parsing, and never pass their contents to a JSON logging decoder.
+        // Even if decoding or reading the body fails, retain the HTTP status already received from Naver.
+        return DataBufferUtils.join(response.body(BodyExtractors.toDataBuffers()), MAX_ERROR_BODY_BYTES)
+                .map(buffer -> {
+                    try {
+                        byte[] bytes = new byte[buffer.readableByteCount()];
+                        buffer.read(bytes);
+                        return parseErrorDetails(bytes);
+                    } finally {
+                        DataBufferUtils.release(buffer);
+                    }
+                })
+                .onErrorReturn(UNKNOWN_ERROR)
+                .defaultIfEmpty(UNKNOWN_ERROR);
+    }
+
+    private ErrorDetails parseErrorDetails(byte[] bytes) {
+        try {
+            JsonNode body = jsonMapper.readTree(bytes);
+            if (body == null || !body.isObject()) return UNKNOWN_ERROR;
+            JsonNode codeNode = body.path("code");
+            String code = codeNode.isString() && ERROR_CODES.contains(codeNode.asString())
+                    ? codeNode.asString() : "UNKNOWN";
+            Set<String> fields = new HashSet<>();
+            JsonNode inputs = body.path("invalidInputs");
+            if (inputs.isArray()) {
+                for (JsonNode input : inputs) {
+                    JsonNode name = input.path("name");
+                    if (name.isString() && TOKEN_FIELDS.contains(name.asString())) fields.add(name.asString());
+                }
+            }
+            return new ErrorDetails(code, TOKEN_FIELDS.stream().filter(fields::contains).toList());
+        } catch (RuntimeException exception) {
+            return UNKNOWN_ERROR;
+        }
+    }
+
+    private ApiException failedRequest(int status, boolean tokenRequest, ErrorDetails details) {
+        // All text values here come from fixed allowlists; do not log provider messages, request IDs, or credentials.
+        log.warn("Naver commerce request rejected: operation={} http_status={} code={} invalid_fields={}",
+                tokenRequest ? "TOKEN" : "RESOURCE", status, details.code(), details.fields());
+        if (status == 401 && !tokenRequest && "GW.AUTHN".equals(details.code())) {
+            return new AuthenticationException();
+        }
         if (status == 429 || status >= 500) {
             return new ApiException(ApiCode.SERVER_ERROR, "네이버 요청이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.");
         }
-        return new ApiException(ApiCode.BAD_REQUEST, "네이버 요청을 처리하지 못했습니다. 애플리케이션 정보와 판매자 권한을 확인해 주세요.");
+        if ("GW.IP_NOT_ALLOWED".equals(details.code())) {
+            return new ApiException(ApiCode.BAD_REQUEST,
+                    "네이버가 API 호출 IP를 허용하지 않았습니다. 네이버 커머스 API센터의 애플리케이션 설정에 현재 서버의 공인 IP를 등록해 주세요.");
+        }
+        if (tokenRequest) {
+            if (details.fields().contains("client_id")) {
+                return new ApiException(ApiCode.BAD_REQUEST,
+                        "네이버 커머스 API 애플리케이션 ID를 확인해 주세요. 앱 정보를 변경했다면 자산 편집에서 내 스토어를 다시 연결해 주세요.");
+            }
+            if (details.fields().contains("client_secret_sign")) {
+                return new ApiException(ApiCode.BAD_REQUEST,
+                        "네이버 앱 인증 서명이 거절되었습니다. 커머스 API센터의 앱 ID·시크릿을 확인하고, 앱 정보를 변경했다면 자산 편집에서 내 스토어를 다시 연결해 주세요.");
+            }
+            if (details.fields().contains("timestamp")) {
+                return new ApiException(ApiCode.BAD_REQUEST,
+                        "네이버 토큰 발급 시간이 유효하지 않습니다. 서버의 날짜·시간 자동 동기화를 확인해 주세요.");
+            }
+            if (details.fields().contains("type")) {
+                return new ApiException(ApiCode.BAD_REQUEST,
+                        "네이버 앱의 인증 유형을 확인해 주세요. 내 스토어 앱은 SELF, 판매자 연동 앱은 SELLER를 사용합니다.");
+            }
+            if (details.fields().contains("account_id")) {
+                return new ApiException(ApiCode.BAD_REQUEST,
+                        "네이버 판매자 ID와 해당 판매자에 대한 애플리케이션의 연동 권한을 확인해 주세요.");
+            }
+            return new ApiException(ApiCode.BAD_REQUEST,
+                    "네이버 인증 토큰 발급이 거절되었습니다. 커머스 API센터의 앱 ID·시크릿, API 호출 허용 IP와 판매자 권한을 확인해 주세요. 앱 정보를 변경했다면 자산 편집에서 다시 연결해 주세요.");
+        }
+        return new ApiException(ApiCode.BAD_REQUEST,
+                "네이버 조회 요청이 거절되었습니다. 애플리케이션의 조회 권한과 판매자 연결 상태를 확인해 주세요.");
     }
+
+    private record ErrorDetails(String code, List<String> fields) {}
 
     private String requiredText(JsonNode node, String field, int maxLength) {
         String value = optionalText(node, field, maxLength);

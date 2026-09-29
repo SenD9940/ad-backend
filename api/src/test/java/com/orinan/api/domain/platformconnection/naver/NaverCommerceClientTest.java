@@ -244,6 +244,106 @@ class NaverCommerceClientTest {
     }
 
     @Test
+    void rejectedIpExplainsTheRequiredSettingAndLogsOnlyAllowlistedDiagnostics(CapturedOutput output) {
+        response(HttpStatus.FORBIDDEN, """
+                {"code":"GW.IP_NOT_ALLOWED","message":"%s", "traceId":"private-trace-id",
+                 "invalidInputs":[{"name":"client_secret_sign","value":"%s","message":"%s"},
+                                  {"name":"private-field-name","value":"private-field-value"}]}
+                """.formatted(ACCESS_TOKEN, CLIENT_SECRET, ACCESS_TOKEN));
+
+        assertThatThrownBy(() -> client.issueToken("id", CLIENT_SECRET, NaverTokenType.SELF, null))
+                .isInstanceOf(ApiException.class).isNotInstanceOf(NaverCommerceClient.AuthenticationException.class)
+                .hasMessageContaining("API 호출 IP").hasMessageContaining("현재 서버의 공인 IP").hasNoCause()
+                .hasMessageNotContaining(ACCESS_TOKEN).hasMessageNotContaining(CLIENT_SECRET);
+        assertThat(output.getAll()).contains("operation=TOKEN http_status=403 code=GW.IP_NOT_ALLOWED",
+                        "invalid_fields=[client_secret_sign]")
+                .doesNotContain(ACCESS_TOKEN, CLIENT_SECRET, "private-trace-id", "private-field-name", "private-field-value");
+        assertThat(requests).hasSize(1);
+    }
+
+    @Test
+    void tokenValidationFieldsProduceStaticActionableMessagesWithoutRetrying(CapturedOutput output) {
+        Map<String, String> expectedMessages = Map.of(
+                "client_id", "애플리케이션 ID",
+                "client_secret_sign", "인증 서명",
+                "timestamp", "날짜·시간 자동 동기화",
+                "type", "인증 유형",
+                "account_id", "판매자 ID");
+        expectedMessages.forEach((field, message) -> {
+            response(HttpStatus.BAD_REQUEST, """
+                    {"code":"BAD_REQUEST","message":"%s",
+                     "invalidInputs":[{"name":"%s","value":"%s","message":"%s"}]}
+                    """.formatted(ACCESS_TOKEN, field, CLIENT_SECRET, ACCESS_TOKEN));
+            assertThatThrownBy(() -> client.issueToken("id", CLIENT_SECRET, NaverTokenType.SELF, null))
+                    .isInstanceOf(ApiException.class).isNotInstanceOf(NaverCommerceClient.AuthenticationException.class)
+                    .hasMessageContaining(message).hasNoCause()
+                    .hasMessageNotContaining(ACCESS_TOKEN).hasMessageNotContaining(CLIENT_SECRET);
+        });
+        assertThat(requests).hasSize(expectedMessages.size());
+        assertThat(output.getAll()).contains("operation=TOKEN http_status=400 code=BAD_REQUEST")
+                .doesNotContain(ACCESS_TOKEN, CLIENT_SECRET);
+    }
+
+    @Test
+    void unrecognizedProviderTextCannotEnterDiagnosticsOrInventFieldErrors(CapturedOutput output) {
+        response(HttpStatus.BAD_REQUEST, """
+                {"code":"%s","message":"timestamp client_secret_sign %s",
+                 "invalidInputs":[{"name":"%s"},{"name":{"client_id":"%s"}},null]}
+                """.formatted(ACCESS_TOKEN, CLIENT_SECRET, ACCESS_TOKEN, CLIENT_SECRET));
+        assertThatThrownBy(() -> client.issueToken("id", CLIENT_SECRET, NaverTokenType.SELF, null))
+                .isInstanceOf(ApiException.class).hasMessageContaining("인증 토큰 발급이 거절")
+                .hasMessageNotContaining("날짜·시간 자동 동기화").hasMessageNotContaining("인증 서명이 거절").hasNoCause();
+        assertThat(output.getAll()).contains("operation=TOKEN http_status=400 code=UNKNOWN invalid_fields=[]")
+                .doesNotContain(ACCESS_TOKEN, CLIENT_SECRET);
+    }
+
+    @Test
+    void unusableErrorBodiesKeepTheKnownHttpStatusAndSafeFallback(CapturedOutput output) {
+        for (String body : List.of("", "invalid JSON " + ACCESS_TOKEN, "null", "[]", "42",
+                "{\"code\":\"GW.AUTHN\",\"message\":\"" + ACCESS_TOKEN.repeat(1000) + "\"}")) {
+            response(HttpStatus.UNAUTHORIZED, body);
+            assertThatThrownBy(() -> client.getChannels(ACCESS_TOKEN))
+                    .isInstanceOfSatisfying(ApiException.class,
+                            error -> assertThat(error.getCodeIfs()).isEqualTo(ApiCode.BAD_REQUEST))
+                    .isNotInstanceOf(NaverCommerceClient.AuthenticationException.class)
+                    .hasMessageContaining("조회 요청이 거절").hasNoCause();
+            response(HttpStatus.SERVICE_UNAVAILABLE, body);
+            assertThatThrownBy(() -> client.issueToken("id", CLIENT_SECRET, NaverTokenType.SELF, null))
+                    .isInstanceOfSatisfying(ApiException.class,
+                            error -> assertThat(error.getCodeIfs()).isEqualTo(ApiCode.SERVER_ERROR))
+                    .hasMessageContaining("요청이 지연").hasNoCause();
+        }
+        assertThat(output.getAll()).contains("operation=RESOURCE http_status=401 code=UNKNOWN",
+                        "operation=TOKEN http_status=503 code=UNKNOWN")
+                .doesNotContain(ACCESS_TOKEN, CLIENT_SECRET);
+    }
+
+    @Test
+    void errorsWhileReadingTheBodyRetainStatusWithoutLeakingTheTransportCause(CapturedOutput output) {
+        responses.add(ClientResponse.create(HttpStatus.FORBIDDEN, strategies)
+                .body(reactor.core.publisher.Flux.error(new IllegalStateException(ACCESS_TOKEN))).build());
+        assertThatThrownBy(() -> client.getChannels(ACCESS_TOKEN))
+                .isInstanceOfSatisfying(ApiException.class,
+                        error -> assertThat(error.getCodeIfs()).isEqualTo(ApiCode.BAD_REQUEST))
+                .hasMessageContaining("조회 요청이 거절").hasNoCause();
+        assertThat(output.getAll()).contains("operation=RESOURCE http_status=403 code=UNKNOWN")
+                .doesNotContain(ACCESS_TOKEN);
+    }
+
+    @Test
+    void tokenFieldHintsDoNotOverrideResourceErrorsOrProviderAvailability() {
+        String body = """
+                {"code":"BAD_REQUEST","invalidInputs":[{"name":"timestamp"}]}
+                """;
+        response(HttpStatus.BAD_REQUEST, body);
+        assertThatThrownBy(() -> client.getChannels(ACCESS_TOKEN))
+                .hasMessageContaining("조회 요청이 거절").hasMessageNotContaining("날짜·시간 자동 동기화");
+        response(HttpStatus.TOO_MANY_REQUESTS, body);
+        assertThatThrownBy(() -> client.issueToken("id", CLIENT_SECRET, NaverTokenType.SELF, null))
+                .hasMessageContaining("요청이 지연").hasMessageNotContaining("날짜·시간 자동 동기화");
+    }
+
+    @Test
     void sanitizesTransportAndMalformedResponseFailures() {
         for (String body : List.of("", "invalid json containing " + ACCESS_TOKEN, "null", "42")) {
             json(body);

@@ -39,6 +39,10 @@ dependencies {
     // WebClient만 사용하는 경우
     implementation 'org.springframework.boot:spring-boot-starter-webclient'
 
+    // Reactor Netty의 기본 macOS 의존성은 Intel용이므로 Apple Silicon용 DNS 라이브러리를 추가합니다.
+    // 버전은 Spring Boot BOM에서 다른 Netty 모듈과 함께 관리합니다.
+    runtimeOnly 'io.netty:netty-resolver-dns-native-macos::osx-aarch_64'
+
     implementation 'org.springframework.boot:spring-boot-starter-restclient'
 
     // Template

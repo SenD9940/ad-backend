@@ -26,3 +26,11 @@ app:
   aws:
     s3:
       key-prefix: ${S3_KEY_PREFIX:ad-backend}
+      bucket: ${S3_BUCKET_NAME:}
+  ai-studio:
+    openai:
+      api-key: ${app.ai-creative.api-key:${OPEN_API_KEY:${OPENAI_API_KEY:}}}
+      text-model: ${OPENAI_TEXT_MODEL:gpt-4o-mini}
+  admin:
+    allowed-origins: ${ADMIN_ALLOWED_ORIGINS:}
+    access-token-minutes: ${ADMIN_ACCESS_TOKEN_MINUTES:30}

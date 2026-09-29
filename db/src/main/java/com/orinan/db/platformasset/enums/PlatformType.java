@@ -13,6 +13,7 @@ public enum PlatformType {
     GOOGLE_ADS("구글"),
     NAVER_ADS("네이버"),
     NAVER_SMART_STORE("네이버 스마트스토어"),
+    IMWEB("아임웹"),
     COUPANG("쿠팡")
     ;
 

@@ -11,6 +11,7 @@ public enum ProviderType {
     THREADS("쓰레드"),
     GOOGLE("구글"),
     NAVER("네이버"),
+    IMWEB("아임웹"),
     COUPANG("쿠팡")
 
     ;

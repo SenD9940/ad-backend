@@ -22,21 +22,6 @@ server:
   port: ${SERVER_PORT:8480}
   shutdown: graceful
 
-app:
-  support:
-    toss:
-      client-key: ${TOSS_PAYMENTS_CLIENT_KEY:}
-      secret-key: ${TOSS_PAYMENTS_SECRET_KEY:}
-  ai-studio:
-    openai:
-      api-key: ${app.ai-creative.api-key:${OPEN_API_KEY:${OPENAI_API_KEY:}}}
-      image-model: ${OPENAI_IMAGE_MODEL:gpt-image-2.5-sunburst}
-      text-model: ${OPENAI_TEXT_MODEL:gpt-4o-mini}
-    worker-enabled: true
-    publish-delay-ms: 20000
-    analysis-cron: "0 10 1 * * *"
-    analysis-zone: Asia/Seoul
-
 token:
   access-token:
     plus-hour: 1

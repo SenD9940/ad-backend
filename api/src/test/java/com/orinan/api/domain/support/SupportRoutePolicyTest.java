@@ -83,6 +83,18 @@ class SupportRoutePolicyTest {
                 variables), handler, read)).isFalse();
     }
 
+    @Test void orderBuyerDataSettlementAndClaimActionsAreDeniedInBothSupportModes() {
+        var variables = Map.of("workspaceId", "10", "assetId", "30", "productOrderId", "2026092900000001");
+        for (var context : new SupportContext[]{read, operate}) {
+            for (String suffix : new String[]{"/order-options", "/orders", "/orders/{productOrderId}", "/settlements"}) {
+                assertThat(policy.permits(request("GET", "/api/workspaces/{workspaceId}/naver/stores/{assetId}" + suffix,
+                        variables), handler, context)).as(context.accessMode() + " " + suffix).isFalse();
+            }
+            assertThat(policy.permits(request("POST", "/api/workspaces/{workspaceId}/naver/stores/{assetId}/orders/{productOrderId}/actions",
+                    variables), handler, context)).isFalse();
+        }
+    }
+
     private static SupportContext context(String mode) {
         return new SupportContext(1, 2, 10, 3, 4, mode, LocalDateTime.now().plusMinutes(30));
     }

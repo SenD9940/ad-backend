@@ -15,13 +15,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AiStudioKeyConfigurationTest {
 
-    // Use the shared YAML and synthetic values only; never load local configuration or credentials.
+    // Use common/prod YAML and synthetic values only; never load local configuration or credentials.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withInitializer(context -> {
                 var sources = context.getEnvironment().getPropertySources();
                 sources.remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
                 sources.remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
                 try {
+                    new YamlPropertySourceLoader().load("prod-application", new ClassPathResource("application-prod.yml"))
+                            .forEach(sources::addLast);
                     new YamlPropertySourceLoader().load("shared-application", new ClassPathResource("application.yml"))
                             .forEach(sources::addLast);
                 } catch (IOException exception) {

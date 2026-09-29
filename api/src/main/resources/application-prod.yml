@@ -56,6 +56,26 @@ app:
       bucket: ${S3_BUCKET_NAME}
       key-prefix: ${S3_KEY_PREFIX:ad-backend}
 
+  imweb:
+    enabled: ${IMWEB_ENABLED:false}
+    client-id: ${IMWEB_CLIENT_ID:}
+    client-secret: ${IMWEB_CLIENT_SECRET:}
+    redirect-uri: ${IMWEB_REDIRECT_URI:http://localhost:3400/open-api/platform-connections/imweb/callback}
+    frontend-redirect-uri: ${IMWEB_FRONTEND_REDIRECT_URI:http://localhost:3400/settings/integrations/imweb/callback}
+  support:
+    toss:
+      client-key: ${TOSS_PAYMENTS_CLIENT_KEY:}
+      secret-key: ${TOSS_PAYMENTS_SECRET_KEY:}
+  ai-studio:
+    openai:
+      api-key: ${app.ai-creative.api-key:${OPEN_API_KEY:${OPENAI_API_KEY:}}}
+      image-model: ${OPENAI_IMAGE_MODEL:gpt-image-2.5-sunburst}
+      text-model: ${OPENAI_TEXT_MODEL:gpt-4o-mini}
+    worker-enabled: true
+    publish-delay-ms: 20000
+    analysis-cron: "0 10 1 * * *"
+    analysis-zone: Asia/Seoul
+
 aes:
   key:
     personal-data-key: ${AES_PERSONAL_DATA_KEY}
